@@ -7,7 +7,8 @@
   let area: HTMLDivElement
   let scrubbing = false
 
-  const dur = $derived(Math.max(store.duration, 1))
+  // The timeline shows the whole take (source time); cuts are shaded.
+  const dur = $derived(Math.max(store.outputTotal, 1))
   const pct = (ms: number): number =>
     (Math.min(Math.max(ms, 0), dur) / dur) * 100
   const ticks = $derived.by(() => {
@@ -22,7 +23,7 @@
 
   function seekFrom(e: PointerEvent): void {
     const r = area.getBoundingClientRect()
-    store.seek(((e.clientX - r.left) / r.width) * dur)
+    store.seekOutput(((e.clientX - r.left) / r.width) * dur)
   }
   function down(e: PointerEvent): void {
     scrubbing = true
@@ -40,7 +41,7 @@
     if (e.key === 'ArrowLeft') store.step(-step)
     else if (e.key === 'ArrowRight') store.step(step)
     else if (e.key === 'Home') store.seek(0)
-    else if (e.key === 'End') store.seek(dur)
+    else if (e.key === 'End') store.seek(store.duration)
     else return
     e.preventDefault()
   }
@@ -104,12 +105,29 @@
         </div>
       </div>
     {/each}
+    {#each store.removed as r (r.startMs)}
+      <span
+        class="cut"
+        data-testid="cut"
+        style="left:{pct(r.startMs)}%;width:{pct(r.endMs) - pct(r.startMs)}%"
+        title="Cut out"
+      ></span>
+    {/each}
+    {#if store.selection}
+      <span
+        class="selection"
+        data-testid="selection"
+        style="left:{pct(store.selection.start)}%;width:{pct(
+          store.selection.end,
+        ) - pct(store.selection.start)}%"
+      ></span>
+    {/if}
     {#each store.markers as m (m)}
       <span class="pause" style="left:{pct(m)}%" title="Paused here"></span>
     {/each}
     <span
       class="playhead"
-      style="left:{pct(store.playhead)}%"
+      style="left:{pct(store.playheadOutput)}%"
       data-testid="playhead"
     ></span>
   </div>
@@ -191,6 +209,28 @@
     stroke: var(--ink-2);
     stroke-width: 1;
     fill: none;
+  }
+  .cut {
+    position: absolute;
+    top: 22px;
+    bottom: 0;
+    background: repeating-linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--rec) 22%, transparent) 0 6px,
+      transparent 6px 12px
+    );
+    border-left: 1px solid var(--rec);
+    border-right: 1px solid var(--rec);
+    pointer-events: none;
+  }
+  .selection {
+    position: absolute;
+    top: 22px;
+    bottom: 0;
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    border-left: 2px solid var(--accent);
+    border-right: 2px solid var(--accent);
+    pointer-events: none;
   }
   .pause {
     position: absolute;

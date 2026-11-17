@@ -1,6 +1,7 @@
 import {
   editedDuration,
   editedToOutput,
+  outputToEditedSnap,
   type EditList,
 } from '../timeline/editlist'
 import { trackExtent } from '../timeline/time'
@@ -37,13 +38,13 @@ export class SessionPlayer {
   private lastOutputMs = 0
   private lastCameraActive = false
   layout: Layout
-  readonly duration: number
+  duration: number
   private readonly screenExtent: { start: number; end: number }
   private readonly cameraExtent: { start: number; end: number } | null
 
   constructor(
     private readonly manifest: SessionManifest,
-    private readonly edit: EditList,
+    private edit: EditList,
     readonly screen: HTMLVideoElement,
     readonly camera: HTMLVideoElement | null,
     private readonly canvas: HTMLCanvasElement,
@@ -59,6 +60,15 @@ export class SessionPlayer {
     this.cameraExtent = ct ? trackExtent(manifest.pauses, ct) : null
     screen.muted = true
     if (camera) camera.muted = false
+  }
+
+  /** Swap the edit list, keeping the playhead on the same source moment. */
+  setEdit(edit: EditList): void {
+    const output = editedToOutput(this.edit, this._playhead)
+    this.edit = edit
+    this.duration = editedDuration(edit)
+    this._playhead = Math.min(outputToEditedSnap(edit, output), this.duration)
+    this.emit()
   }
 
   get playing(): boolean {

@@ -38,6 +38,12 @@
     } else if (mod && e.key.toLowerCase() === 'y') {
       e.preventDefault()
       store.redo()
+    } else if (!mod && e.key.toLowerCase() === 'i') {
+      store.markIn()
+    } else if (!mod && e.key.toLowerCase() === 'o') {
+      store.markOut()
+    } else if (!mod && (e.key.toLowerCase() === 'x' || e.key === 'Delete')) {
+      store.cutSelection()
     }
   }
 </script>
@@ -74,6 +80,46 @@
     </section>
 
     <aside class="sidebar" aria-label="Bubble">
+      <h2>Trim and cut</h2>
+      <div class="trim" role="group" aria-label="Trim and cut">
+        <div class="actions">
+          <Button onclick={() => store.markIn()}>Mark in</Button>
+          <Button onclick={() => store.markOut()}>Mark out</Button>
+        </div>
+        <div class="actions">
+          <Button
+            disabled={!store.selection}
+            onclick={() => store.cutSelection()}
+          >
+            Cut selection
+          </Button>
+          <Button
+            disabled={!store.selection}
+            onclick={() => store.keepSelection()}
+          >
+            Keep selection
+          </Button>
+        </div>
+        <div class="actions">
+          <Button onclick={() => store.trimStart()}>Trim start</Button>
+          <Button onclick={() => store.trimEnd()}>Trim end</Button>
+        </div>
+        <div class="actions">
+          <Button disabled={!store.canUndo} onclick={() => store.undo()}
+            >Undo</Button
+          >
+          <Button disabled={!store.canRedo} onclick={() => store.redo()}
+            >Redo</Button
+          >
+          <Button disabled={!store.edited} onclick={() => store.restoreAll()}>
+            Restore all
+          </Button>
+        </div>
+        <p class="hint">
+          Mark in and out (I and O) on the timeline, then cut the selection (X).
+          Trim start and end cut up to or from the playhead.
+        </p>
+      </div>
       <h2>Camera bubble</h2>
       {#if store.sessions.length > 1}
         <SelectField
@@ -93,13 +139,7 @@
           max={0.6}
         />
         <div class="actions">
-          <Button disabled={!store.canUndo} onclick={() => store.undo()}
-            >Undo</Button
-          >
-          <Button disabled={!store.canRedo} onclick={() => store.redo()}
-            >Redo</Button
-          >
-          <Button onclick={() => store.resetBubble()}>Reset</Button>
+          <Button onclick={() => store.resetBubble()}>Reset bubble</Button>
         </div>
         <p class="hint">
           Drag the bubble in the preview, or use its handles to resize.
@@ -176,7 +216,12 @@
     margin: 0;
     font-size: var(--text-lg);
   }
+  .trim {
+    display: grid;
+    gap: var(--space-2);
+  }
   .actions {
+    flex-wrap: wrap;
     display: flex;
     gap: var(--space-2);
   }

@@ -1,4 +1,15 @@
 import {
+  MIN_RANGE_MS,
+  cutOutput,
+  defaultEditList,
+  editedToOutput,
+  isUntouched,
+  keepOutput,
+  outputDuration,
+  outputToEditedSnap,
+  removedRanges,
+  type EditList,
+  type Range,
   DecodedVideo,
   RemoteRenderer,
   fixInfiniteDuration,
@@ -39,6 +50,11 @@ export interface TrackRow {
   note?: string
 }
 
+interface Snapshot {
+  bubble: ComposeState['bubble']
+  edit: EditList
+}
+
 export class ComposeStore {
   sessions = $state<{ id: string; createdAt: string; durationMs: number }[]>([])
   sessionId = $state('')
@@ -64,7 +80,7 @@ export class ComposeStore {
 
   private player: SessionPlayer | null = null
   private unsub: (() => void) | null = null
-  private history: History<ComposeState['bubble']> | null = null
+  private history: History<Snapshot> | null = null
   private saveTimer: ReturnType<typeof setTimeout> | undefined
 
   async init(preferred?: string): Promise<void> {
@@ -97,7 +113,11 @@ export class ComposeStore {
       const compose = readCompose(s.manifest)
       this.session = s
       this.compose = compose
-      this.history = new History(compose.bubble)
+      this.history = new History<Snapshot>({
+        bubble: $state.snapshot(compose.bubble) as ComposeState['bubble'],
+        edit: $state.snapshot(compose.edit) as EditList,
+      })
+      this.selection = null
       this.syncHistoryFlags()
       this.duration = editedDuration(compose.edit)
       this.screenUrl = URL.createObjectURL(s.screen!)
@@ -336,7 +356,7 @@ export class ComposeStore {
   }
 
   commitBubble(): void {
-    if (this.compose) this.record(this.compose.bubble)
+    if (this.compose) this.record()
   }
 
   resetBubble(): void {
@@ -354,12 +374,16 @@ export class ComposeStore {
       this.player.draw()
     }
     this.saved = false
-    if (commit) this.record(b)
+    if (commit) this.record()
     this.scheduleSave()
   }
 
-  private record(b: ComposeState['bubble']): void {
-    this.history?.push($state.snapshot(b) as ComposeState['bubble'])
+  private record(): void {
+    if (!this.compose) return
+    this.history?.push({
+      bubble: $state.snapshot(this.compose.bubble) as ComposeState['bubble'],
+      edit: $state.snapshot(this.compose.edit) as EditList,
+    })
     this.syncHistoryFlags()
   }
 
@@ -369,14 +393,108 @@ export class ComposeStore {
   redo(): void {
     this.applyHistory(this.history?.redo())
   }
-  private applyHistory(b: ComposeState['bubble'] | undefined): void {
-    if (!b) return
+  private applyHistory(snap: Snapshot | undefined): void {
+    if (!snap || !this.compose) return
     this.syncHistoryFlags()
-    this.setBubble(structuredClone(b), false)
+    this.setEdit(structuredClone(snap.edit), false)
+    this.setBubble(structuredClone(snap.bubble), false)
   }
   private syncHistoryFlags(): void {
     this.canUndo = this.history?.canUndo ?? false
     this.canRedo = this.history?.canRedo ?? false
+  }
+
+  // ---- trim and cut --------------------------------------------------
+
+  /** Selection on the source timeline (output ms), set with Mark in/out. */
+  selection = $state<{ start: number; end: number } | null>(null)
+  private markStart: number | null = null
+
+  get edit(): EditList | null {
+    return this.compose?.edit ?? null
+  }
+  /** Length of the whole take on the source timeline (cuts included). */
+  get outputTotal(): number {
+    return this.session ? outputDuration(this.session.manifest) : 0
+  }
+  get removed(): Range[] {
+    return this.compose
+      ? removedRanges(this.compose.edit, this.outputTotal)
+      : []
+  }
+  get edited(): boolean {
+    return !!this.compose && !isUntouched(this.compose.edit, this.outputTotal)
+  }
+  /** The playhead on the source timeline. */
+  get playheadOutput(): number {
+    return this.compose ? editedToOutput(this.compose.edit, this.playhead) : 0
+  }
+
+  /** Seek to a point on the source timeline; cut points snap forward. */
+  seekOutput(ms: number): void {
+    if (!this.compose) return
+    this.seek(outputToEditedSnap(this.compose.edit, ms))
+  }
+
+  markIn(): void {
+    this.markStart = this.playheadOutput
+    const end = this.selection?.end ?? this.outputTotal
+    this.selection = {
+      start: Math.min(this.markStart, end),
+      end: Math.max(this.markStart, end),
+    }
+    if (this.selection.end - this.selection.start < MIN_RANGE_MS)
+      this.selection = { start: this.markStart, end: this.outputTotal }
+  }
+  markOut(): void {
+    const at = this.playheadOutput
+    const start = this.markStart ?? this.selection?.start ?? 0
+    this.selection = { start: Math.min(start, at), end: Math.max(start, at) }
+  }
+  clearSelection(): void {
+    this.selection = null
+    this.markStart = null
+  }
+
+  cutSelection(): void {
+    const sel = this.selection
+    if (sel) this.applyEdit((e) => cutOutput(e, sel.start, sel.end))
+    this.clearSelection()
+  }
+  keepSelection(): void {
+    const sel = this.selection
+    if (sel) this.applyEdit((e) => keepOutput(e, sel.start, sel.end))
+    this.clearSelection()
+  }
+  trimStart(): void {
+    const at = this.playheadOutput
+    this.applyEdit((e) => cutOutput(e, 0, at))
+  }
+  trimEnd(): void {
+    const at = this.playheadOutput
+    this.applyEdit((e) => cutOutput(e, at, this.outputTotal))
+  }
+  restoreAll(): void {
+    this.applyEdit(() => defaultEditList(this.outputTotal))
+    this.clearSelection()
+  }
+
+  private applyEdit(fn: (e: EditList) => EditList): void {
+    if (!this.compose) return
+    const next = fn($state.snapshot(this.compose.edit) as EditList)
+    if (JSON.stringify(next) === JSON.stringify(this.compose.edit)) return
+    this.setEdit(next, true)
+  }
+
+  private setEdit(edit: EditList, commit: boolean): void {
+    if (!this.compose) return
+    this.compose.edit = edit
+    this.duration = editedDuration(edit)
+    this.player?.setEdit(edit)
+    this.playhead = this.player?.playhead ?? 0
+    this.saved = false
+    if (commit) this.record()
+    this.scheduleSave()
   }
 
   // ---- persistence ---------------------------------------------------
