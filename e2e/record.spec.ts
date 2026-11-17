@@ -84,3 +84,18 @@ test('record, pause, resume and stop produces screen + camera files with a manif
   for (const size of Object.values(manifest!.sizes))
     expect(size).toBeGreaterThan(0)
 })
+
+test('keyboard shortcuts start, pause and stop a take', async ({ page }) => {
+  await page.goto('./')
+  await expect(
+    page.getByRole('button', { name: 'Start recording' }),
+  ).toBeEnabled()
+  await page.keyboard.press('Alt+R')
+  await expect(page.getByText('Recording', { exact: true })).toBeVisible()
+  await page.keyboard.press('Alt+P')
+  await expect(page.getByText('Paused', { exact: true })).toBeVisible()
+  await page.keyboard.press('Alt+P')
+  await expect(page.getByText('Recording', { exact: true })).toBeVisible()
+  await page.keyboard.press('Alt+R')
+  await expect(page.getByText(/Take saved/)).toBeVisible()
+})

@@ -57,7 +57,7 @@
   />
   <!-- Record stays mounted (hidden) so live streams survive a trip to Compose. -->
   <main hidden={page !== 'record'}>
-    <RecordPage />
+    <RecordPage active={page === 'record'} />
   </main>
   {#if page === 'compose'}
     <main>

@@ -10,6 +10,7 @@
   import { formatTime } from './format'
   import StreamVideo from './StreamVideo.svelte'
 
+  let { active = true }: { active?: boolean } = $props()
   const r = new RecorderStore()
   onMount(() => void r.init())
 
@@ -44,6 +45,22 @@
               : 'Ready',
   )
 
+  /** Alt+R starts or stops, Alt+P pauses or resumes. */
+  function onkeydown(e: KeyboardEvent): void {
+    if (!active || !e.altKey || e.ctrlKey || e.metaKey) return
+    const key = e.code
+    if (key === 'KeyR') {
+      e.preventDefault()
+      if (live) void r.stop()
+      else if (r.phase === 'countdown') r.cancelCountdown()
+      else if (canStart) void r.start()
+    } else if (key === 'KeyP' && live) {
+      e.preventDefault()
+      if (paused) r.resume()
+      else r.pause()
+    }
+  }
+
   function download(index: number): void {
     const t = r.output?.tracks[index]
     if (!t) return
@@ -56,6 +73,8 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 </script>
+
+<svelte:window {onkeydown} />
 
 {#if !r.supported}
   <div class="unsupported" role="alert">
@@ -199,6 +218,7 @@
           bind:checked={r.countdown}
           disabled={sidebarLocked}
         />
+        <span class="hint">Alt+R start/stop · Alt+P pause</span>
       </div>
     </footer>
 
