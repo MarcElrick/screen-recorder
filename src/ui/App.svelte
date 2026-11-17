@@ -143,7 +143,11 @@
   {/if}
   {#if page === 'compose'}
     <main>
-      <ComposePage sessionId={takeId} onrecord={() => (page = 'record')} />
+      <ComposePage
+        sessionId={takeId}
+        onrecord={() => (page = 'record')}
+        onannotate={() => (page = 'annotate')}
+      />
     </main>
   {/if}
   {#if page === 'takes'}

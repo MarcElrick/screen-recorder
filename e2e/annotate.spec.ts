@@ -26,35 +26,71 @@ test('skip goes straight to Compose; deleting a word shortens the take and expor
   await page.getByRole('button', { name: 'Stop' }).click()
   await expect(page.getByText(/Take saved/)).toBeVisible()
 
-  // Skip leads to Compose with no captions section.
+  // Skip leads straight to Compose, with no word or caption tabs.
   await page.getByRole('button', { name: /Annotate/ }).click()
   await expect(
     page.getByRole('region', { name: 'Generate captions' }),
   ).toBeVisible()
   await page.getByRole('button', { name: 'Skip this step' }).click()
   await expect(page.getByRole('slider', { name: 'Playhead' })).toBeVisible()
-  await expect(page.getByRole('group', { name: 'Captions' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Words' })).toHaveCount(0)
 
-  // Back to Annotate and generate.
+  // Annotate only makes the transcript.
   await page.getByRole('button', { name: /Annotate/ }).click()
   await page.getByRole('button', { name: 'Generate captions' }).click()
+  await expect(
+    page.getByRole('region', { name: 'Transcript ready' }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'Continue to Compose' }).click()
+
+  // In Compose the words are edited alongside the timeline.
+  const playhead = page.getByRole('slider', { name: 'Playhead' })
+  await expect(playhead).toBeVisible()
+  const total = Number(await playhead.getAttribute('aria-valuemax'))
   const words = page.getByTestId('transcript')
   await expect(words.getByRole('button', { name: 'Welcome' })).toBeVisible()
 
-  // Delete the filler word "um".
+  // Picking a word selects its range on the timeline.
   await words.getByRole('button', { name: 'um', exact: true }).click()
+  await expect(page.getByTestId('selection')).toBeVisible()
   await page.getByRole('button', { name: 'Delete words' }).click()
   await expect(words.getByRole('button', { name: 'um' })).toHaveAttribute(
     'data-status',
     'deleted',
   )
+  await expect(page.getByTestId('cut')).toHaveCount(1)
+  const shorter = Number(await playhead.getAttribute('aria-valuemax'))
+  expect(shorter).toBeLessThan(total)
 
-  // Split before "demo." if it isn't already a caption start (how the words
-  // group depends on the audio the fake device produced), then reword the first.
+  // Undo is one stack with the timeline: it brings the word back.
+  await page.getByRole('button', { name: 'Undo' }).click()
+  await expect(page.getByTestId('cut')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Redo' }).click()
+  await expect(page.getByTestId('cut')).toHaveCount(1)
+
+  // A timeline drag picks words too.
+  await page.getByRole('button', { name: 'Restore words' }).click()
+  await expect(page.getByTestId('cut')).toHaveCount(0)
+  await words.getByRole('button', { name: 'um', exact: true }).click()
+  await page.getByRole('button', { name: 'Delete words' }).click()
+  await expect(page.getByTestId('cut')).toHaveCount(1)
+
+  // Dragging a range on the timeline picks the words inside it.
+  const box = (await playhead.boundingBox())!
+  await page.mouse.move(box.x + box.width * 0.02, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height / 2, {
+    steps: 5,
+  })
+  await page.mouse.up()
+  await expect(words.locator('.word.selected').first()).toBeVisible()
+
+  // Captions tab: split before "demo." if it isn't already a caption start
+  // (how words group depends on the fake audio), then reword the first.
   const cueBoxes = page.getByTestId('cues').getByRole('textbox')
   await page.getByRole('tab', { name: 'Captions' }).click()
   const before = await cueBoxes.count()
-  await page.getByRole('tab', { name: 'Transcript' }).click()
+  await page.getByRole('tab', { name: 'Words' }).click()
   await words.getByRole('button', { name: 'demo.', exact: true }).click()
   const split = page.getByRole('button', { name: 'New caption here' })
   const canSplit = await split.isEnabled()
@@ -66,14 +102,6 @@ test('skip goes straight to Compose; deleting a word shortens the take and expor
   await expect(
     page.getByRole('button', { name: 'Use spoken words' }),
   ).toBeVisible()
-  await page.getByRole('button', { name: 'Continue to Compose' }).click()
-
-  const playhead = page.getByRole('slider', { name: 'Playhead' })
-  await expect(playhead).toBeVisible()
-  const total = Number(await playhead.getAttribute('aria-valuemax'))
-  await expect(page.getByTestId('cut')).toHaveCount(1)
-  expect(total).toBeLessThan(4000)
-  await expect(page.getByRole('group', { name: 'Captions' })).toBeVisible()
 
   // The caption shows in the Compose preview (white text near the bottom).
   await playhead.focus()
@@ -104,9 +132,17 @@ test('skip goes straight to Compose; deleting a word shortens the take and expor
     .toBeGreaterThan(30)
 
   // Survives a reload (stored in session.json).
+  await expect(
+    page
+      .getByRole('region', { name: 'Preview' })
+      .getByText('Saved', { exact: true }),
+  ).toBeVisible()
   await page.reload()
   await page.getByRole('button', { name: /Compose/ }).click()
   await expect(page.getByTestId('cut')).toHaveCount(1)
+  await expect(
+    page.getByRole('tab', { name: 'Words', selected: true }),
+  ).toBeVisible()
 
   // Export offers caption files.
   await page.getByRole('button', { name: /Export/ }).click()

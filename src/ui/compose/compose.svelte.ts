@@ -44,7 +44,16 @@ import {
   type Envelope,
   type TranscriptState,
   type CaptionStyle,
+  type CaptionLayout,
   type Cue,
+  type Word,
+  captionStarts,
+  detectFillers,
+  joinCaptionWithPrevious,
+  longSilences,
+  materializeLayout,
+  setCaptionText,
+  splitCaptionAt,
 } from '../../engine'
 
 const SAVE_DELAY_MS = 400
@@ -63,6 +72,8 @@ interface Snapshot {
   edit: EditList
   deleted: string[]
   silences: Range[]
+  text: Record<string, string>
+  layout: CaptionLayout | undefined
 }
 
 export class ComposeStore {
@@ -387,7 +398,7 @@ export class ComposeStore {
       this.player.layout = b
       this.player.draw()
     }
-    this.saved = false
+    this.markDirty()
     if (commit) this.record()
     this.scheduleSave()
   }
@@ -406,6 +417,12 @@ export class ComposeStore {
       silences: structuredClone(
         $state.snapshot(this.transcript?.silenceCuts ?? []) as Range[],
       ),
+      text: { ...(this.transcript?.text ?? {}) },
+      layout: this.transcript?.captionLayout
+        ? structuredClone(
+            $state.snapshot(this.transcript.captionLayout) as CaptionLayout,
+          )
+        : undefined,
     }
   }
 
@@ -441,7 +458,7 @@ export class ComposeStore {
     this.transcript.captions = { ...this.transcript.captions, ...patch }
     this.recompute()
     this.player?.draw()
-    this.saved = false
+    this.markDirty()
     this.scheduleSave()
   }
 
@@ -457,6 +474,10 @@ export class ComposeStore {
     if (this.transcript) {
       this.transcript.deletedWordIds = [...snap.deleted]
       this.transcript.silenceCuts = structuredClone(snap.silences)
+      this.transcript.text = { ...snap.text }
+      this.transcript.captionLayout = snap.layout
+        ? structuredClone(snap.layout)
+        : undefined
     }
     this.setEdit(structuredClone(snap.edit), false)
     this.setBubble(structuredClone(snap.bubble), false)
@@ -550,7 +571,7 @@ export class ComposeStore {
     // The manual edit may already be untouched; still record the restore.
     this.recompute()
     this.record()
-    this.saved = false
+    this.markDirty()
     this.scheduleSave()
     this.clearSelection()
   }
@@ -566,9 +587,234 @@ export class ComposeStore {
     if (!this.compose) return
     this.compose.edit = edit
     this.recompute()
-    this.saved = false
+    this.markDirty()
     if (commit) this.record()
     this.scheduleSave()
+  }
+
+  // ---- transcript editing (one flow with the timeline) ---------------
+
+  get words(): Word[] {
+    return this.transcript?.words ?? []
+  }
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- derived value, never mutated
+  deleted = $derived(new Set(this.transcript?.deletedWordIds ?? []))
+  /** Ids of the words that start a caption. */
+  starts = $derived(captionStarts(this.cues))
+
+  wordText(w: Word): string {
+    return (this.transcript?.text[w.id] ?? w.text).trim()
+  }
+  /** kept, deleted by a word edit, or already cut by a timeline cut. */
+  statusOf(w: Word): 'kept' | 'deleted' | 'cut' {
+    if (this.deleted.has(w.id)) return 'deleted'
+    const mid = (w.startMs + w.endMs) / 2
+    const manual = this.compose?.edit
+    if (
+      manual &&
+      !manual.ranges.some((r) => mid >= r.startMs && mid <= r.endMs)
+    )
+      return 'cut'
+    return 'kept'
+  }
+
+  /**
+   * The words covered by the timeline selection (centre inside it), as an
+   * index range. The selection is the one shared notion of "what is picked",
+   * whether it was dragged on the timeline or made from words.
+   */
+  selectedWords = $derived.by((): { from: number; to: number } | null => {
+    const sel = this.selection
+    const ws = this.transcript?.words
+    if (!sel || !ws) return null
+    let from = -1
+    let to = -1
+    ws.forEach((w, i) => {
+      const mid = (w.startMs + w.endMs) / 2
+      if (mid >= sel.start && mid <= sel.end) {
+        if (from < 0) from = i
+        to = i
+      }
+    })
+    return from < 0 ? null : { from, to }
+  })
+  get selectedIds(): string[] {
+    const r = this.selectedWords
+    return r ? this.words.slice(r.from, r.to + 1).map((w) => w.id) : []
+  }
+  /** The word under the playhead, or -1. */
+  activeWord = $derived.by((): number => {
+    const ws = this.transcript?.words
+    if (!ws) return -1
+    const ms = this.playheadOutput
+    let lo = 0
+    let hi = ws.length - 1
+    let found = -1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (ws[mid].startMs <= ms) {
+        found = mid
+        lo = mid + 1
+      } else hi = mid - 1
+    }
+    return found >= 0 && ms <= ws[found].endMs + 250 ? found : -1
+  })
+
+  /** Click a word: select it (Shift extends) and jump there. */
+  clickWord(i: number, extend: boolean): void {
+    const ws = this.words
+    const w = ws[i]
+    if (!w) return
+    const cur = this.selectedWords
+    const from = extend && cur ? Math.min(cur.from, i) : i
+    const to = extend && cur ? Math.max(cur.to, i) : i
+    this.selectRange(ws[from].startMs, ws[to].endMs)
+    this.seekOutput(w.startMs)
+  }
+
+  /** Delete the selected words, or restore them when all are already deleted. */
+  toggleSelectedWords(): void {
+    const ids = this.selectedIds
+    if (!ids.length || !this.transcript) return
+    this.setDeleted(ids, !ids.every((id) => this.deleted.has(id)))
+  }
+  setDeleted(ids: string[], deleted: boolean): void {
+    if (!this.transcript) return
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local copy
+    const set = new Set(this.deleted)
+    for (const id of ids) {
+      if (deleted) set.add(id)
+      else set.delete(id)
+    }
+    this.transcript.deletedWordIds = [...set]
+    this.commitTranscript()
+  }
+  /** Save a transcript change: re-derive the edit, record undo, persist. */
+  private commitTranscript(): void {
+    this.recompute()
+    this.markDirty()
+    this.record()
+    // Word and caption edits are saved straight away, not after a pause.
+    void this.flush()
+  }
+
+  setWordText(id: string, text: string): void {
+    const t = this.transcript
+    const w = t?.words.find((x) => x.id === id)
+    if (!t || !w) return
+    const clean = text.trim()
+    if (!clean || clean === w.text) delete t.text[id]
+    else t.text[id] = clean
+    this.commitTranscript()
+  }
+
+  /** Move every word earlier (negative) or later: a manual timing fix. */
+  shiftWords(deltaMs: number): void {
+    const t = this.transcript
+    if (!t) return
+    const total = this.outputTotal
+    t.words = (t.words as Word[]).map((w) => {
+      const startMs = Math.min(Math.max(0, w.startMs + deltaMs), total - 1)
+      return {
+        ...w,
+        startMs,
+        endMs: Math.min(Math.max(startMs + 1, w.endMs + deltaMs), total),
+      }
+    })
+    t.shiftMs = (t.shiftMs ?? 0) + deltaMs
+    this.recompute()
+    this.markDirty()
+    this.scheduleSave()
+  }
+
+  get fillers() {
+    return this.transcript
+      ? detectFillers(this.words, this.transcript.text)
+      : []
+  }
+  removeFillers(ids: string[]): void {
+    this.setDeleted(ids, true)
+  }
+  get silenceGaps() {
+    const t = this.transcript
+    if (!t) return []
+    return longSilences(this.words, this.deleted).filter(
+      (g) =>
+        !t.silenceCuts.some(
+          (c) => c.startMs <= g.startMs && c.endMs >= g.endMs,
+        ),
+    )
+  }
+  tightenSilences(): void {
+    const t = this.transcript
+    const gaps = this.silenceGaps
+    if (!t || !gaps.length) return
+    t.silenceCuts = [...t.silenceCuts, ...gaps]
+    this.commitTranscript()
+  }
+
+  // Captions: wording, splitting and joining, kept apart from the words.
+
+  private layout(): CaptionLayout {
+    const t = this.transcript!
+    return t.captionLayout
+      ? ($state.snapshot(t.captionLayout) as CaptionLayout)
+      : materializeLayout(this.cues, t.words)
+  }
+  private shown(key: string): string {
+    return this.cues.find((c) => c.key === key)?.text ?? ''
+  }
+  setCueText(key: string, text: string): void {
+    const t = this.transcript
+    const cue = this.cues.find((c) => c.key === key)
+    if (!t || !cue) return
+    const next = setCaptionText(this.layout(), key, text, cue.autoText ?? '')
+    if (JSON.stringify(next) === JSON.stringify(t.captionLayout)) return
+    t.captionLayout = next
+    this.commitTranscript()
+  }
+  resetCueText(key: string): void {
+    const cue = this.cues.find((c) => c.key === key)
+    if (cue) this.setCueText(key, cue.autoText ?? '')
+  }
+  get canStartCaption(): boolean {
+    const i = this.selectedWords?.from ?? -1
+    return i > 0 && !this.starts.has(this.words[i].id)
+  }
+  get canJoinCaption(): boolean {
+    const i = this.selectedWords?.from ?? -1
+    return i > 0 && this.starts.has(this.words[i].id)
+  }
+  startCaptionAtSelection(): void {
+    const t = this.transcript
+    const i = this.selectedWords?.from ?? -1
+    if (!t || i <= 0) return
+    t.captionLayout = splitCaptionAt(this.layout(), t.words, i)
+    this.commitTranscript()
+  }
+  joinCue(key: string): void {
+    const t = this.transcript
+    if (!t) return
+    const next = joinCaptionWithPrevious(this.layout(), t.words, key, (k) =>
+      this.shown(k),
+    )
+    if (JSON.stringify(next) === JSON.stringify(t.captionLayout)) return
+    t.captionLayout = next
+    this.commitTranscript()
+  }
+  joinSelectedCaption(): void {
+    const w = this.words[this.selectedWords?.from ?? -1]
+    if (w) this.joinCue(w.id)
+  }
+  resetCaptionEdits(): void {
+    const t = this.transcript
+    if (!t?.captionLayout) return
+    t.captionLayout = undefined
+    this.commitTranscript()
+  }
+  /** Jump to the start of a caption (edited time). */
+  seekCue(startEdited: number): void {
+    this.seek(startEdited)
   }
 
   // ---- persistence ---------------------------------------------------
@@ -578,10 +824,24 @@ export class ComposeStore {
     this.saveTimer = setTimeout(() => void this.flush(), SAVE_DELAY_MS)
   }
 
-  async flush(): Promise<void> {
+  private rev = 0
+  private writing: Promise<void> = Promise.resolve()
+  private markDirty(): void {
+    this.saved = false
+    this.rev++
+  }
+
+  /** Save now. Writes are queued, and a change made mid-write is saved after it. */
+  flush(): Promise<void> {
     clearTimeout(this.saveTimer)
     this.saveTimer = undefined
+    this.writing = this.writing.then(() => this.write())
+    return this.writing
+  }
+
+  private async write(): Promise<void> {
     if (this.saved || !this.session || !this.compose) return
+    const rev = this.rev
     const id = this.session.manifest.id
     try {
       const withC = withCompose(
@@ -597,7 +857,8 @@ export class ComposeStore {
             )
           : withC,
       )
-      this.saved = true
+      // Only clean if nothing changed while the write was running.
+      if (this.rev === rev) this.saved = true
     } catch {
       this.error = 'Could not save your changes.'
     }

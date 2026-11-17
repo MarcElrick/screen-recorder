@@ -1,17 +1,9 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from 'svelte'
-  import { Progress, Tabs } from 'bits-ui'
-  import {
-    MODELS,
-    cueAt,
-    editedToOutput,
-    outputToEdited,
-    sessionLabel,
-    type ModelId,
-  } from '../../engine'
+  import { onDestroy, onMount } from 'svelte'
+  import { Progress } from 'bits-ui'
+  import { MODELS, sessionLabel, type ModelId } from '../../engine'
   import Button from '../components/Button.svelte'
   import SelectField from '../components/SelectField.svelte'
-  import SwitchField from '../components/SwitchField.svelte'
   import { formatTime } from '../record/format'
   import { AnnotateStore } from './annotate.svelte'
 
@@ -30,10 +22,7 @@
   const hasGpu = typeof navigator !== 'undefined' && 'gpu' in navigator
   const store = new AnnotateStore()
   onMount(() => void store.init(sessionId))
-  onDestroy(() => {
-    stop()
-    store.destroy()
-  })
+  onDestroy(() => store.destroy())
 
   const takeOptions = $derived(
     store.sessions.map((s) => ({
@@ -43,7 +32,10 @@
   )
   const modelOptions = (
     Object.values(MODELS) as (typeof MODELS)[ModelId][]
-  ).map((m) => ({ id: m.id, label: `${m.label} (~${m.approxMb} MB)` }))
+  ).map((m) => ({
+    id: m.id,
+    label: `${m.label} (${m.approxMb >= 1000 ? `~${(m.approxMb / 1000).toFixed(1)} GB` : `~${m.approxMb} MB`})${m.needsGpu ? ' · needs a good GPU' : ''}`,
+  }))
   const languages = [
     { id: 'auto', label: 'Detect language' },
     { id: 'english', label: 'English' },
@@ -55,129 +47,6 @@
     { id: 'dutch', label: 'Dutch' },
     { id: 'japanese', label: 'Japanese' },
   ]
-
-  // ---- preview -------------------------------------------------------
-  let audio = $state<HTMLAudioElement | null>(null)
-  let screen = $state<HTMLVideoElement | null>(null)
-  let playing = $state(false)
-  let outputMs = $state(0)
-  let raf = 0
-
-  const activeIndex = $derived.by(() => {
-    const ws = store.words
-    let lo = 0
-    let hi = ws.length - 1
-    let found = -1
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1
-      if (ws[mid].startMs <= outputMs) {
-        found = mid
-        lo = mid + 1
-      } else hi = mid - 1
-    }
-    return found >= 0 && outputMs <= ws[found].endMs + 250 ? found : -1
-  })
-
-  function seek(ms: number): void {
-    outputMs = ms
-    if (audio) audio.currentTime = Math.max(0, (ms - store.audioStart) / 1000)
-    if (screen)
-      screen.currentTime = Math.max(0, (ms - store.screenStart) / 1000)
-  }
-  function loop(): void {
-    if (!audio) return
-    let ms = audio.currentTime * 1000 + store.audioStart
-    // Play what the edit keeps: hop over removed ranges.
-    const cut = store.removed.find((r) => ms >= r.startMs && ms < r.endMs)
-    if (cut) {
-      ms = cut.endMs
-      audio.currentTime = (ms - store.audioStart) / 1000
-    }
-    outputMs = ms
-    if (screen) {
-      const want = (ms - store.screenStart) / 1000
-      if (Math.abs(screen.currentTime - want) > 0.15) screen.currentTime = want
-    }
-    if (audio.ended) return stop()
-    raf = requestAnimationFrame(loop)
-  }
-  function play(): void {
-    if (!audio) return
-    if (audio.ended) seek(0)
-    void audio.play().catch(() => {})
-    void screen?.play().catch(() => {})
-    playing = true
-    cancelAnimationFrame(raf)
-    raf = requestAnimationFrame(loop)
-  }
-  function stop(): void {
-    cancelAnimationFrame(raf)
-    audio?.pause()
-    screen?.pause()
-    playing = false
-  }
-
-  $effect(() => {
-    // Keep the playing word in view.
-    if (playing && activeIndex >= 0)
-      void tick().then(() =>
-        document
-          .querySelector(`[data-word="${activeIndex}"]`)
-          ?.scrollIntoView({ block: 'nearest' }),
-      )
-  })
-
-  // ---- transcript interaction ------------------------------------------
-  let editing = $state(-1)
-  let draft = $state('')
-
-  function clickWord(i: number, e: MouseEvent): void {
-    if (e.shiftKey && store.selection) store.select(store.selection.from, i)
-    else store.select(i)
-    seek(store.words[i].startMs)
-  }
-  function startEdit(i: number): void {
-    editing = i
-    draft = store.wordText(store.words[i])
-  }
-  function finishEdit(save: boolean): void {
-    if (editing >= 0 && save) store.setText(store.words[editing].id, draft)
-    editing = -1
-  }
-
-  function onkeydown(e: KeyboardEvent): void {
-    const t = e.target as HTMLElement
-    if (t.closest('input, textarea, select, [role="combobox"]')) return
-    if (store.phase !== 'editing') return
-    const sel = store.selection
-    if (e.key === ' ' && !t.closest('button.word')) {
-      e.preventDefault()
-      if (playing) stop()
-      else play()
-    } else if (e.key === 'Delete' || e.key === 'Backspace') {
-      e.preventDefault()
-      store.toggleSelection()
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
-      e.preventDefault()
-      if (e.shiftKey) store.redo()
-      else store.undo()
-    } else if (e.key === 'Enter' && sel && sel.from === sel.to) {
-      e.preventDefault()
-      startEdit(sel.from)
-    } else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && sel) {
-      e.preventDefault()
-      const d = e.key === 'ArrowRight' ? 1 : -1
-      const max = store.words.length - 1
-      if (e.shiftKey) {
-        const to = Math.min(max, Math.max(0, sel.to + d))
-        store.select(sel.from, to)
-      } else {
-        const i = Math.min(max, Math.max(0, sel.to + d))
-        store.select(i)
-        seek(store.words[i].startMs)
-      }
-    }
-  }
 
   const pct = $derived(Math.round(store.modelState.progress * 100))
   const modelNote = $derived.by(() => {
@@ -191,28 +60,7 @@
     if (store.modelCached) return 'Speech model saved in this browser'
     return `Not downloaded yet (about ${MODELS[store.model].approxMb} MB, one time)`
   })
-  const selCount = $derived(
-    store.selection ? store.selection.to - store.selection.from + 1 : 0,
-  )
-  const allDeleted = $derived(
-    selCount > 0 && store.selectedIds.every((id) => store.deleted.has(id)),
-  )
-  let tab = $state<'transcript' | 'captions'>('transcript')
-  const activeCueKey = $derived.by(() => {
-    const eff = store.resolved?.effective
-    if (!eff) return undefined
-    const ed = outputToEdited(eff, outputMs)
-    return ed === null ? undefined : cueAt(store.cues, ed)?.key
-  })
-  function seekCue(startEdited: number): void {
-    const eff = store.resolved?.effective
-    if (eff) seek(editedToOutput(eff, startEdited))
-  }
-  const deletedCount = $derived(store.deleted.size)
-  const manual = $derived(store.resolved?.compose.edit)
 </script>
-
-<svelte:window {onkeydown} />
 
 {#if store.phase === 'loading'}
   <div class="state" role="status"><p>Opening your take…</p></div>
@@ -249,33 +97,51 @@
         />
       {/if}
       <div class="spacer"></div>
-      {#if store.phase !== 'working'}
-        <Button onclick={() => onskip(store.sessionId)}>
-          {store.transcript ? 'Skip' : 'Skip this step'}
-        </Button>
-        {#if store.transcript}
+      {#if store.phase === 'ready'}
+        <Button onclick={() => onskip(store.sessionId)}>Skip this step</Button>
+      {/if}
+    </header>
+
+    {#if store.phase === 'done' && store.transcript}
+      <section class="card" aria-label="Transcript ready">
+        <h3>Transcript ready</h3>
+        <p class="hint">
+          {store.transcript.words.length} words, made with the {store.transcript
+            .model || 'speech'} model. Edit the words and captions in Compose, alongside
+          the preview and timeline.
+        </p>
+        {#if store.error}<p class="error" role="alert">{store.error}</p>{/if}
+        <div class="actions">
           <Button
             variant="primary"
             onclick={async () => {
-              stop()
               await store.flush()
               oncontinue(store.sessionId)
             }}
           >
             Continue to Compose
           </Button>
-        {/if}
-      {/if}
-    </header>
-
-    {#if store.phase === 'ready' || store.phase === 'working'}
+          <Button onclick={() => (store.phase = 'ready')}>
+            Transcribe again…
+          </Button>
+          <Button onclick={() => void store.discard()}>Remove transcript</Button
+          >
+        </div>
+      </section>
+    {:else}
       <section class="card" aria-label="Generate captions">
         <h3>Generate captions</h3>
         <p class="hint">
           Your voice is turned into text on this computer. Nothing is uploaded.
-          Delete words from the transcript to cut them from the video, and the
-          captions follow your edits.
+          Then you can delete words to cut them from the video, and the captions
+          follow your edits.
         </p>
+        {#if store.transcript}
+          <p class="error" role="alert">
+            Transcribing again replaces this transcript, including your word and
+            caption edits.
+          </p>
+        {/if}
         <SelectField
           label="Model"
           value={store.model}
@@ -325,257 +191,6 @@
           </div>
         {/if}
       </section>
-    {:else if store.transcript}
-      <div class="editor">
-        <section class="preview" aria-label="Preview">
-          <video
-            bind:this={screen}
-            src={store.screenUrl}
-            muted
-            playsinline
-            aria-label="Screen preview"
-          ></video>
-          <audio bind:this={audio} src={store.cameraUrl} preload="auto"></audio>
-          <div class="transport">
-            <Button
-              variant="primary"
-              onclick={() => (playing ? stop() : play())}
-            >
-              {playing ? 'Pause' : 'Play'}
-            </Button>
-            <span class="time">{formatTime(Math.max(0, outputMs))}</span>
-            <span class="hint">
-              {formatTime(store.keptMs)} kept of {formatTime(store.total)}
-            </span>
-          </div>
-        </section>
-
-        <section class="transcript" aria-label="Transcript">
-          <Tabs.Root bind:value={tab} class="tabs">
-            <Tabs.List class="tab-list" aria-label="Edit">
-              <Tabs.Trigger value="transcript" class="tab"
-                >Transcript</Tabs.Trigger
-              >
-              <Tabs.Trigger value="captions" class="tab">Captions</Tabs.Trigger>
-            </Tabs.List>
-            <Tabs.Content value="transcript" class="tab-content">
-              <div class="tools">
-                <Button
-                  disabled={!selCount}
-                  onclick={() => store.toggleSelection()}
-                >
-                  {allDeleted ? 'Restore words' : 'Delete words'}
-                </Button>
-                <Button disabled={!store.canUndo} onclick={() => store.undo()}
-                  >Undo</Button
-                >
-                <Button disabled={!store.canRedo} onclick={() => store.redo()}
-                  >Redo</Button
-                >
-                <Button
-                  disabled={!store.canStartCaption}
-                  onclick={() => store.startCaptionAtSelection()}
-                >
-                  New caption here
-                </Button>
-                <Button
-                  disabled={!store.canJoinCaption}
-                  onclick={() => store.joinSelectedCaption()}
-                >
-                  Join with previous caption
-                </Button>
-                <span class="hint">
-                  Click a word to jump to it, Shift+click to select more, Delete
-                  to remove, Enter to fix the spelling. A bar marks where each
-                  caption starts.
-                </span>
-              </div>
-              <p class="words" data-testid="transcript">
-                {#each store.words as w, i (w.id)}
-                  {#if editing === i}
-                    <!-- svelte-ignore a11y_autofocus -->
-                    <input
-                      class="edit"
-                      aria-label="Word text"
-                      bind:value={draft}
-                      autofocus
-                      size={Math.max(3, draft.length)}
-                      onblur={() => finishEdit(true)}
-                      onkeydown={(e) => {
-                        if (e.key === 'Enter') finishEdit(true)
-                        if (e.key === 'Escape') finishEdit(false)
-                        e.stopPropagation()
-                      }}
-                    />
-                  {:else}
-                    {@const status = store.statusOf(w, manual)}
-                    <button
-                      type="button"
-                      class="word"
-                      class:deleted={status === 'deleted'}
-                      class:cut={status === 'cut'}
-                      class:cue-start={i > 0 && store.starts.has(w.id)}
-                      class:active={i === activeIndex}
-                      class:selected={store.selection !== null &&
-                        i >= store.selection.from &&
-                        i <= store.selection.to}
-                      data-word={i}
-                      data-status={status}
-                      aria-pressed={status === 'deleted'}
-                      title={status === 'cut'
-                        ? 'Already cut in Compose'
-                        : undefined}
-                      onclick={(e) => clickWord(i, e)}
-                      ondblclick={() => startEdit(i)}
-                    >
-                      {store.wordText(w)}
-                    </button>
-                  {/if}
-                {/each}
-              </p>
-            </Tabs.Content>
-            <Tabs.Content value="captions" class="tab-content">
-              <div class="tools">
-                <span class="hint">
-                  Edit what each caption says. This changes the captions only;
-                  the transcript and what gets cut stay as they are. Press Enter
-                  for a new line.
-                </span>
-                <Button
-                  disabled={!store.transcript.captionLayout}
-                  onclick={() => store.resetCaptionEdits()}
-                >
-                  Reset captions
-                </Button>
-              </div>
-              <ol class="cues" data-testid="cues">
-                {#each store.cues as c (c.key)}
-                  <li class="cue" class:active={c.key === activeCueKey}>
-                    <button
-                      type="button"
-                      class="cue-time"
-                      title="Jump to this caption"
-                      onclick={() => seekCue(c.startMs)}
-                    >
-                      {formatTime(c.startMs)}
-                    </button>
-                    <textarea
-                      class="cue-text"
-                      aria-label={`Caption at ${formatTime(c.startMs)}`}
-                      rows={Math.max(2, c.text.split('\n').length)}
-                      value={c.text}
-                      onchange={(e) =>
-                        store.setCueText(c.key!, e.currentTarget.value)}
-                    ></textarea>
-                    <div class="cue-actions">
-                      {#if c.custom}
-                        <Button onclick={() => store.resetCueText(c.key!)}>
-                          Use spoken words
-                        </Button>
-                      {/if}
-                      {#if c.key !== store.words[0]?.id}
-                        <Button onclick={() => store.joinCue(c.key!)}>
-                          Join with previous
-                        </Button>
-                      {/if}
-                    </div>
-                  </li>
-                {/each}
-              </ol>
-            </Tabs.Content>
-          </Tabs.Root>
-        </section>
-
-        <aside class="side" aria-label="Captions and tools">
-          <h3>Captions</h3>
-          <SwitchField
-            label="Show captions"
-            checked={store.transcript.captions.enabled}
-            onchange={(v) => store.setCaptions({ enabled: v })}
-          />
-          <SelectField
-            label="Size"
-            value={store.transcript.captions.size}
-            options={[
-              { id: 'small', label: 'Small' },
-              { id: 'medium', label: 'Medium' },
-              { id: 'large', label: 'Large' },
-            ]}
-            onchange={(v) =>
-              store.setCaptions({ size: v as 'small' | 'medium' | 'large' })}
-          />
-          <SelectField
-            label="Position"
-            value={store.transcript.captions.position}
-            options={[
-              { id: 'bottom', label: 'Bottom' },
-              { id: 'top', label: 'Top' },
-            ]}
-            onchange={(v) =>
-              store.setCaptions({ position: v as 'top' | 'bottom' })}
-          />
-          <SwitchField
-            label="Dark background"
-            checked={store.transcript.captions.background}
-            onchange={(v) => store.setCaptions({ background: v })}
-          />
-          <h3>Word timing</h3>
-          <p class="hint">
-            If cuts clip a word, nudge every word earlier or later and replay.
-            {#if store.transcript.shiftMs}
-              Shifted {store.transcript.shiftMs > 0 ? '+' : ''}{store.transcript
-                .shiftMs} ms.
-            {/if}
-          </p>
-          <div class="actions">
-            <Button onclick={() => store.shiftWords(-20)}>Earlier 20 ms</Button>
-            <Button onclick={() => store.shiftWords(20)}>Later 20 ms</Button>
-          </div>
-          <h3>Clean up</h3>
-          {#if store.fillers.length}
-            <p class="hint">Filler words found (when the model kept them):</p>
-            <div class="chips">
-              {#each store.fillers as g (g.word)}
-                <Button onclick={() => store.removeFillers(g.ids)}>
-                  Remove “{g.word}” ×{g.ids.length}
-                </Button>
-              {/each}
-            </div>
-          {:else}
-            <p class="hint">No filler words found.</p>
-          {/if}
-          <div class="actions">
-            <Button
-              disabled={store.silenceGaps.length === 0}
-              onclick={() => store.tightenSilences()}
-            >
-              Shorten long pauses ({store.silenceGaps.length})
-            </Button>
-            <Button
-              disabled={deletedCount === 0 &&
-                store.transcript.silenceCuts.length === 0}
-              onclick={() => store.restoreAll()}
-            >
-              Restore all words
-            </Button>
-          </div>
-          <h3>Transcript</h3>
-          <p class="hint">
-            Made with the {store.transcript.model || 'speech'} model.
-          </p>
-          <div class="actions">
-            <Button
-              onclick={() => {
-                stop()
-                void store.discard()
-              }}
-            >
-              Remove transcript
-            </Button>
-          </div>
-          {#if store.error}<p class="error" role="alert">{store.error}</p>{/if}
-        </aside>
-      </div>
     {/if}
   </div>
 {/if}
@@ -615,6 +230,7 @@
     flex: 1;
   }
   .card {
+    width: 100%;
     max-width: 520px;
     margin: var(--space-5) auto;
     display: grid;
@@ -645,8 +261,7 @@
     background: var(--warn-bg);
     color: var(--warn-ink);
   }
-  .actions,
-  .chips {
+  .actions {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
@@ -661,196 +276,5 @@
     height: 100%;
     background: var(--accent);
     transition: width var(--dur);
-  }
-  .editor {
-    flex: 1;
-    min-height: 0;
-    display: grid;
-    grid-template-columns: minmax(240px, 340px) 1fr 260px;
-    gap: var(--space-4);
-  }
-  .preview {
-    display: grid;
-    gap: var(--space-3);
-    align-content: start;
-  }
-  .preview video {
-    width: 100%;
-    background: var(--surface-stage);
-    border-radius: var(--radius-md);
-    aspect-ratio: 16 / 9;
-  }
-  .transport {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    flex-wrap: wrap;
-  }
-  .time {
-    font-family: var(--font-mono);
-  }
-  .transcript {
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-  }
-  :global(.tabs) {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-  }
-  :global(.tab-list) {
-    display: flex;
-    gap: var(--space-1);
-    border-bottom: 1px solid var(--border);
-  }
-  :global(.tab) {
-    font: inherit;
-    padding: var(--space-2) var(--space-4);
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--ink-2);
-    cursor: pointer;
-  }
-  :global(.tab[data-state='active']) {
-    color: var(--ink-1);
-    font-weight: 600;
-    border-bottom-color: var(--accent);
-  }
-  :global(.tab-content) {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-  }
-  :global(.tab-content[hidden]) {
-    display: none;
-  }
-  .cues {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    overflow: auto;
-    flex: 1;
-    display: grid;
-    gap: var(--space-2);
-    align-content: start;
-  }
-  .cue {
-    display: grid;
-    grid-template-columns: 56px 1fr auto;
-    gap: var(--space-3);
-    align-items: start;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface-1);
-  }
-  .cue.active {
-    border-color: var(--accent);
-  }
-  .cue-time {
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    color: var(--ink-2);
-    background: none;
-    border: none;
-    padding: var(--space-1) 0;
-    cursor: pointer;
-    text-align: left;
-  }
-  .cue-text {
-    font: inherit;
-    resize: vertical;
-    padding: var(--space-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--surface-0);
-    color: var(--ink-1);
-  }
-  .cue-actions {
-    display: grid;
-    gap: var(--space-1);
-  }
-  .tools {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .words {
-    margin: 0;
-    padding: var(--space-4);
-    overflow: auto;
-    flex: 1;
-    line-height: 2;
-    font-size: var(--text-lg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface-1);
-  }
-  .word {
-    font: inherit;
-    color: var(--ink-1);
-    background: none;
-    border: none;
-    border-radius: var(--radius-sm);
-    padding: 0 3px;
-    margin: 0;
-    cursor: pointer;
-  }
-  .word:hover {
-    background: var(--surface-2);
-  }
-  .word.active {
-    outline: 2px solid var(--accent);
-  }
-  .word.selected {
-    background: var(--accent);
-    color: var(--accent-ink);
-  }
-  .word.deleted {
-    color: var(--ink-3);
-    text-decoration: line-through;
-    opacity: 0.7;
-  }
-  .word.cue-start {
-    border-left: 2px solid var(--accent);
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  }
-  .word.cut {
-    color: var(--ink-3);
-    font-style: italic;
-    text-decoration: underline dotted;
-  }
-  .edit {
-    font: inherit;
-    padding: 0 3px;
-    border: 1px solid var(--focus);
-    border-radius: var(--radius-sm);
-    background: var(--surface-0);
-    color: var(--ink-1);
-  }
-  .side {
-    display: grid;
-    gap: var(--space-3);
-    align-content: start;
-    overflow: auto;
-    padding: var(--space-4);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface-1);
-  }
-  @media (max-width: 1000px) {
-    .editor {
-      grid-template-columns: 1fr;
-      overflow: auto;
-    }
   }
 </style>
