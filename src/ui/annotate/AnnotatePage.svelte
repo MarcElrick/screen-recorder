@@ -1,7 +1,14 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte'
-  import { Progress } from 'bits-ui'
-  import { MODELS, sessionLabel, type ModelId } from '../../engine'
+  import { Progress, Tabs } from 'bits-ui'
+  import {
+    MODELS,
+    cueAt,
+    editedToOutput,
+    outputToEdited,
+    sessionLabel,
+    type ModelId,
+  } from '../../engine'
   import Button from '../components/Button.svelte'
   import SelectField from '../components/SelectField.svelte'
   import SwitchField from '../components/SwitchField.svelte'
@@ -190,6 +197,17 @@
   const allDeleted = $derived(
     selCount > 0 && store.selectedIds.every((id) => store.deleted.has(id)),
   )
+  let tab = $state<'transcript' | 'captions'>('transcript')
+  const activeCueKey = $derived.by(() => {
+    const eff = store.resolved?.effective
+    if (!eff) return undefined
+    const ed = outputToEdited(eff, outputMs)
+    return ed === null ? undefined : cueAt(store.cues, ed)?.key
+  })
+  function seekCue(startEdited: number): void {
+    const eff = store.resolved?.effective
+    if (eff) seek(editedToOutput(eff, startEdited))
+  }
   const deletedCount = $derived(store.deleted.size)
   const manual = $derived(store.resolved?.compose.edit)
 </script>
@@ -333,66 +351,139 @@
         </section>
 
         <section class="transcript" aria-label="Transcript">
-          <div class="tools">
-            <Button
-              disabled={!selCount}
-              onclick={() => store.toggleSelection()}
-            >
-              {allDeleted ? 'Restore words' : 'Delete words'}
-            </Button>
-            <Button disabled={!store.canUndo} onclick={() => store.undo()}
-              >Undo</Button
-            >
-            <Button disabled={!store.canRedo} onclick={() => store.redo()}
-              >Redo</Button
-            >
-            <span class="hint">
-              Click a word to jump to it, Shift+click to select more, Delete to
-              remove, Enter to fix the spelling.
-            </span>
-          </div>
-          <p class="words" data-testid="transcript">
-            {#each store.words as w, i (w.id)}
-              {#if editing === i}
-                <!-- svelte-ignore a11y_autofocus -->
-                <input
-                  class="edit"
-                  aria-label="Word text"
-                  bind:value={draft}
-                  autofocus
-                  size={Math.max(3, draft.length)}
-                  onblur={() => finishEdit(true)}
-                  onkeydown={(e) => {
-                    if (e.key === 'Enter') finishEdit(true)
-                    if (e.key === 'Escape') finishEdit(false)
-                    e.stopPropagation()
-                  }}
-                />
-              {:else}
-                {@const status = store.statusOf(w, manual)}
-                <button
-                  type="button"
-                  class="word"
-                  class:deleted={status === 'deleted'}
-                  class:cut={status === 'cut'}
-                  class:active={i === activeIndex}
-                  class:selected={store.selection !== null &&
-                    i >= store.selection.from &&
-                    i <= store.selection.to}
-                  data-word={i}
-                  data-status={status}
-                  aria-pressed={status === 'deleted'}
-                  title={status === 'cut'
-                    ? 'Already cut in Compose'
-                    : undefined}
-                  onclick={(e) => clickWord(i, e)}
-                  ondblclick={() => startEdit(i)}
+          <Tabs.Root bind:value={tab} class="tabs">
+            <Tabs.List class="tab-list" aria-label="Edit">
+              <Tabs.Trigger value="transcript" class="tab"
+                >Transcript</Tabs.Trigger
+              >
+              <Tabs.Trigger value="captions" class="tab">Captions</Tabs.Trigger>
+            </Tabs.List>
+            <Tabs.Content value="transcript" class="tab-content">
+              <div class="tools">
+                <Button
+                  disabled={!selCount}
+                  onclick={() => store.toggleSelection()}
                 >
-                  {store.wordText(w)}
-                </button>
-              {/if}
-            {/each}
-          </p>
+                  {allDeleted ? 'Restore words' : 'Delete words'}
+                </Button>
+                <Button disabled={!store.canUndo} onclick={() => store.undo()}
+                  >Undo</Button
+                >
+                <Button disabled={!store.canRedo} onclick={() => store.redo()}
+                  >Redo</Button
+                >
+                <Button
+                  disabled={!store.canStartCaption}
+                  onclick={() => store.startCaptionAtSelection()}
+                >
+                  New caption here
+                </Button>
+                <Button
+                  disabled={!store.canJoinCaption}
+                  onclick={() => store.joinSelectedCaption()}
+                >
+                  Join with previous caption
+                </Button>
+                <span class="hint">
+                  Click a word to jump to it, Shift+click to select more, Delete
+                  to remove, Enter to fix the spelling. A bar marks where each
+                  caption starts.
+                </span>
+              </div>
+              <p class="words" data-testid="transcript">
+                {#each store.words as w, i (w.id)}
+                  {#if editing === i}
+                    <!-- svelte-ignore a11y_autofocus -->
+                    <input
+                      class="edit"
+                      aria-label="Word text"
+                      bind:value={draft}
+                      autofocus
+                      size={Math.max(3, draft.length)}
+                      onblur={() => finishEdit(true)}
+                      onkeydown={(e) => {
+                        if (e.key === 'Enter') finishEdit(true)
+                        if (e.key === 'Escape') finishEdit(false)
+                        e.stopPropagation()
+                      }}
+                    />
+                  {:else}
+                    {@const status = store.statusOf(w, manual)}
+                    <button
+                      type="button"
+                      class="word"
+                      class:deleted={status === 'deleted'}
+                      class:cut={status === 'cut'}
+                      class:cue-start={i > 0 && store.starts.has(w.id)}
+                      class:active={i === activeIndex}
+                      class:selected={store.selection !== null &&
+                        i >= store.selection.from &&
+                        i <= store.selection.to}
+                      data-word={i}
+                      data-status={status}
+                      aria-pressed={status === 'deleted'}
+                      title={status === 'cut'
+                        ? 'Already cut in Compose'
+                        : undefined}
+                      onclick={(e) => clickWord(i, e)}
+                      ondblclick={() => startEdit(i)}
+                    >
+                      {store.wordText(w)}
+                    </button>
+                  {/if}
+                {/each}
+              </p>
+            </Tabs.Content>
+            <Tabs.Content value="captions" class="tab-content">
+              <div class="tools">
+                <span class="hint">
+                  Edit what each caption says. This changes the captions only;
+                  the transcript and what gets cut stay as they are. Press Enter
+                  for a new line.
+                </span>
+                <Button
+                  disabled={!store.transcript.captionLayout}
+                  onclick={() => store.resetCaptionEdits()}
+                >
+                  Reset captions
+                </Button>
+              </div>
+              <ol class="cues" data-testid="cues">
+                {#each store.cues as c (c.key)}
+                  <li class="cue" class:active={c.key === activeCueKey}>
+                    <button
+                      type="button"
+                      class="cue-time"
+                      title="Jump to this caption"
+                      onclick={() => seekCue(c.startMs)}
+                    >
+                      {formatTime(c.startMs)}
+                    </button>
+                    <textarea
+                      class="cue-text"
+                      aria-label={`Caption at ${formatTime(c.startMs)}`}
+                      rows={Math.max(2, c.text.split('\n').length)}
+                      value={c.text}
+                      onchange={(e) =>
+                        store.setCueText(c.key!, e.currentTarget.value)}
+                    ></textarea>
+                    <div class="cue-actions">
+                      {#if c.custom}
+                        <Button onclick={() => store.resetCueText(c.key!)}>
+                          Use spoken words
+                        </Button>
+                      {/if}
+                      {#if c.key !== store.words[0]?.id}
+                        <Button onclick={() => store.joinCue(c.key!)}>
+                          Join with previous
+                        </Button>
+                      {/if}
+                    </div>
+                  </li>
+                {/each}
+              </ol>
+            </Tabs.Content>
+          </Tabs.Root>
         </section>
 
         <aside class="side" aria-label="Captions and tools">
@@ -604,6 +695,89 @@
     flex-direction: column;
     gap: var(--space-3);
   }
+  :global(.tabs) {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  :global(.tab-list) {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border);
+  }
+  :global(.tab) {
+    font: inherit;
+    padding: var(--space-2) var(--space-4);
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  :global(.tab[data-state='active']) {
+    color: var(--ink-1);
+    font-weight: 600;
+    border-bottom-color: var(--accent);
+  }
+  :global(.tab-content) {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  :global(.tab-content[hidden]) {
+    display: none;
+  }
+  .cues {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    overflow: auto;
+    flex: 1;
+    display: grid;
+    gap: var(--space-2);
+    align-content: start;
+  }
+  .cue {
+    display: grid;
+    grid-template-columns: 56px 1fr auto;
+    gap: var(--space-3);
+    align-items: start;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+  }
+  .cue.active {
+    border-color: var(--accent);
+  }
+  .cue-time {
+    font: inherit;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--ink-2);
+    background: none;
+    border: none;
+    padding: var(--space-1) 0;
+    cursor: pointer;
+    text-align: left;
+  }
+  .cue-text {
+    font: inherit;
+    resize: vertical;
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-0);
+    color: var(--ink-1);
+  }
+  .cue-actions {
+    display: grid;
+    gap: var(--space-1);
+  }
   .tools {
     display: flex;
     flex-wrap: wrap;
@@ -645,6 +819,10 @@
     color: var(--ink-3);
     text-decoration: line-through;
     opacity: 0.7;
+  }
+  .word.cue-start {
+    border-left: 2px solid var(--accent);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   }
   .word.cut {
     color: var(--ink-3);

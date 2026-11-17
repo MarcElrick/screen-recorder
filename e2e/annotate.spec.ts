@@ -1,3 +1,5 @@
+/// <reference types="node" />
+import { readFile } from 'node:fs/promises'
 import { expect, test } from '@playwright/test'
 
 // A canned transcript stands in for Whisper so the test needs no model download.
@@ -46,6 +48,19 @@ test('skip goes straight to Compose; deleting a word shortens the take and expor
     'data-status',
     'deleted',
   )
+
+  // Auto captions are "Welcome to" and "the demo."; split before "demo.",
+  // then reword the first with a line break.
+  await words.getByRole('button', { name: 'demo.', exact: true }).click()
+  await page.getByRole('button', { name: 'New caption here' }).click()
+  await page.getByRole('tab', { name: 'Captions' }).click()
+  const cueBoxes = page.getByTestId('cues').getByRole('textbox')
+  await expect(cueBoxes).toHaveCount(3)
+  await cueBoxes.first().fill('Hello,\nfriends')
+  await cueBoxes.first().blur()
+  await expect(
+    page.getByRole('button', { name: 'Use spoken words' }),
+  ).toBeVisible()
   await page.getByRole('button', { name: 'Continue to Compose' }).click()
 
   const playhead = page.getByRole('slider', { name: 'Playhead' })
@@ -90,8 +105,14 @@ test('skip goes straight to Compose; deleting a word shortens the take and expor
 
   // Export offers caption files.
   await page.getByRole('button', { name: /Export/ }).click()
-  const srt = page.getByRole('button', { name: 'Download SRT' })
-  await expect(srt).toBeVisible()
-  const [dl] = await Promise.all([page.waitForEvent('download'), srt.click()])
+  const srtButton = page.getByRole('button', { name: 'Download SRT' })
+  await expect(srtButton).toBeVisible()
+  const [dl] = await Promise.all([
+    page.waitForEvent('download'),
+    srtButton.click(),
+  ])
   expect(dl.suggestedFilename()).toBe('captions.srt')
+  const srt = await readFile((await dl.path())!, 'utf8')
+  expect(srt).toContain('Hello,\nfriends')
+  expect(srt).toContain('demo.')
 })

@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import { cutOutput, defaultEditList } from '../timeline/editlist'
-import { buildCues, cueAt, splitLines, toSrt, toVtt } from './cues'
+import {
+  buildCues,
+  buildCuesFromLayout,
+  cueAt,
+  splitLines,
+  toSrt,
+  toVtt,
+} from './cues'
+import {
+  joinCaptionWithPrevious,
+  materializeLayout,
+  setCaptionText,
+  splitCaptionAt,
+} from './caption-edit'
 import { deriveEditList, wordCutRanges, wordIsCutByTimeline } from './cuts'
 import { computeEnvelope, snapToSilence } from './envelope'
 import { detectFillers, longSilences } from './fillers'
@@ -203,5 +216,81 @@ describe('transcript state', () => {
     expect(t.deletedWordIds).toEqual(['w0'])
     expect(t.captions.enabled).toBe(true)
     expect(t.silenceCuts).toEqual([])
+  })
+})
+
+describe('caption layout', () => {
+  const ws: Word[] = [
+    mk('Hello', 0, 400, 0),
+    mk('um', 600, 800, 1),
+    mk('there.', 1000, 1500, 2),
+    mk('Next', 3000, 3400, 3),
+    mk('slide', 3500, 4000, 4),
+  ]
+  const edit = defaultEditList(5000)
+  const none = new Set<string>()
+
+  it('materialises the automatic grouping without changing it', () => {
+    const auto = buildCues(ws, none, {}, edit)
+    const layout = materializeLayout(auto, ws)
+    expect(layout.breaks).toEqual(['w3'])
+    const again = buildCuesFromLayout(ws, layout, none, {}, edit)
+    expect(again.map((c) => c.text)).toEqual(auto.map((c) => c.text))
+  })
+
+  it('splits a caption at a word and merges it back', () => {
+    let layout = materializeLayout(buildCues(ws, none, {}, edit), ws)
+    layout = splitCaptionAt(layout, ws, 2)
+    const cues = buildCuesFromLayout(ws, layout, none, {}, edit)
+    expect(cues.map((c) => c.text)).toEqual([
+      'Hello um',
+      'there.',
+      'Next slide',
+    ])
+    layout = joinCaptionWithPrevious(layout, ws, 'w2', () => '')
+    expect(
+      buildCuesFromLayout(ws, layout, none, {}, edit).map((c) => c.text),
+    ).toEqual(['Hello um there.', 'Next slide'])
+  })
+
+  it('keeps custom text and line breaks, and clears it when it matches the words', () => {
+    let layout = materializeLayout(buildCues(ws, none, {}, edit), ws)
+    layout = setCaptionText(layout, 'w0', 'Hello,\nthere!', 'Hello um there.')
+    const [c] = buildCuesFromLayout(ws, layout, none, {}, edit)
+    expect(c.text).toBe('Hello,\nthere!')
+    expect(c.custom).toBe(true)
+    layout = setCaptionText(layout, 'w0', 'Hello um there.', 'Hello um there.')
+    expect(layout.text).toEqual({})
+  })
+
+  it('keeps custom text when words are deleted and drops a fully deleted caption', () => {
+    let layout = materializeLayout(buildCues(ws, none, {}, edit), ws)
+    layout = setCaptionText(layout, 'w0', 'Hi!', 'Hello um there.')
+    const del = new Set(['w1'])
+    const eff = deriveEditList(edit, wordCutRanges(ws, del, null, 5000))
+    const cues = buildCuesFromLayout(ws, layout, del, {}, eff)
+    expect(cues[0].text).toBe('Hi!')
+    const gone = new Set(['w3', 'w4'])
+    const eff2 = deriveEditList(edit, wordCutRanges(ws, gone, null, 5000))
+    expect(buildCuesFromLayout(ws, layout, gone, {}, eff2)).toHaveLength(1)
+  })
+
+  it('merging captions with custom text keeps both texts', () => {
+    let layout = materializeLayout(buildCues(ws, none, {}, edit), ws)
+    layout = setCaptionText(layout, 'w0', 'Hi', 'Hello um there.')
+    const cues = buildCuesFromLayout(ws, layout, none, {}, edit)
+    const shown = (k: string): string =>
+      cues.find((c) => c.key === k)?.text ?? ''
+    layout = joinCaptionWithPrevious(layout, ws, 'w3', shown)
+    const [c] = buildCuesFromLayout(ws, layout, none, {}, edit)
+    expect(c.text).toBe('Hi Next slide')
+  })
+
+  it('writes manual line breaks to SRT and VTT unchanged', () => {
+    const cues = [{ startMs: 0, endMs: 1000, text: 'Line one\nLine two' }]
+    expect(toSrt(cues)).toBe(
+      '1\n00:00:00,000 --> 00:00:01,000\nLine one\nLine two\n',
+    )
+    expect(toVtt(cues)).toContain('Line one\nLine two')
   })
 })

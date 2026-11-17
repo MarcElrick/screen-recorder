@@ -6,6 +6,11 @@ import {
   SpeechModel,
   ALIGN_VERSION,
   alignWords,
+  captionStarts,
+  joinCaptionWithPrevious,
+  materializeLayout,
+  setCaptionText,
+  splitCaptionAt,
   detectFillers,
   listSessions,
   loadSession,
@@ -22,6 +27,8 @@ import {
   trackExtent,
   withTranscript,
   writeCachedJson,
+  type CaptionLayout,
+  type Cue,
   type Envelope,
   type LoadedSession,
   type ModelId,
@@ -45,6 +52,7 @@ interface Snapshot {
   deleted: string[]
   silences: Range[]
   text: Record<string, string>
+  layout: CaptionLayout | undefined
 }
 
 export type WordStatus = 'kept' | 'deleted' | 'cut'
@@ -306,6 +314,9 @@ export class AnnotateStore {
       deleted: [...t.deletedWordIds],
       silences: structuredClone($state.snapshot(t.silenceCuts) as Range[]),
       text: { ...t.text },
+      layout: t.captionLayout
+        ? structuredClone($state.snapshot(t.captionLayout) as CaptionLayout)
+        : undefined,
     }
   }
   private sync(): void {
@@ -329,6 +340,9 @@ export class AnnotateStore {
     this.transcript.deletedWordIds = [...s.deleted]
     this.transcript.silenceCuts = structuredClone(s.silences)
     this.transcript.text = { ...s.text }
+    this.transcript.captionLayout = s.layout
+      ? structuredClone(s.layout)
+      : undefined
     this.sync()
     void this.persist()
   }
@@ -422,6 +436,79 @@ export class AnnotateStore {
     if (!this.transcript) return
     this.transcript.captions = { ...this.transcript.captions, ...patch }
     void this.persist()
+  }
+
+  // ---- caption editing -------------------------------------------------
+
+  cues = $derived<Cue[]>(this.resolved?.cues ?? [])
+  /** Ids of the words that start a caption. */
+  starts = $derived(captionStarts(this.cues))
+
+  /** The editable layout, created from the automatic grouping on first edit. */
+  private layout(): CaptionLayout {
+    const t = this.transcript!
+    return t.captionLayout
+      ? ($state.snapshot(t.captionLayout) as CaptionLayout)
+      : materializeLayout(this.cues, t.words)
+  }
+  private shown(key: string): string {
+    return this.cues.find((c) => c.key === key)?.text ?? ''
+  }
+
+  setCueText(key: string, text: string): void {
+    const t = this.transcript
+    const cue = this.cues.find((c) => c.key === key)
+    if (!t || !cue) return
+    const next = setCaptionText(this.layout(), key, text, cue.autoText ?? '')
+    if (JSON.stringify(next) === JSON.stringify(t.captionLayout)) return
+    t.captionLayout = next
+    this.commit()
+  }
+  /** Reset one caption's text back to what the words say. */
+  resetCueText(key: string): void {
+    const cue = this.cues.find((c) => c.key === key)
+    if (cue) this.setCueText(key, cue.autoText ?? '')
+  }
+
+  get selectedIndex(): number {
+    return this.selection ? this.selection.from : -1
+  }
+  get canStartCaption(): boolean {
+    const i = this.selectedIndex
+    return i > 0 && !this.starts.has(this.words[i].id)
+  }
+  get canJoinCaption(): boolean {
+    const i = this.selectedIndex
+    return i > 0 && this.starts.has(this.words[i].id)
+  }
+  /** Begin a new caption at the selected word. */
+  startCaptionAtSelection(): void {
+    const t = this.transcript
+    const i = this.selectedIndex
+    if (!t || i <= 0) return
+    t.captionLayout = splitCaptionAt(this.layout(), t.words, i)
+    this.commit()
+  }
+  joinCue(key: string): void {
+    const t = this.transcript
+    if (!t) return
+    const next = joinCaptionWithPrevious(this.layout(), t.words, key, (k) =>
+      this.shown(k),
+    )
+    if (JSON.stringify(next) === JSON.stringify(t.captionLayout)) return
+    t.captionLayout = next
+    this.commit()
+  }
+  joinSelectedCaption(): void {
+    const w = this.words[this.selectedIndex]
+    if (w) this.joinCue(w.id)
+  }
+  /** Back to automatic caption grouping, dropping custom text. */
+  resetCaptionEdits(): void {
+    const t = this.transcript
+    if (!t?.captionLayout) return
+    t.captionLayout = undefined
+    this.commit()
   }
 
   // ---- extras: fillers and silences ------------------------------------

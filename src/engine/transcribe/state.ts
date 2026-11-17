@@ -1,6 +1,7 @@
 import type { SessionManifest } from '../session/manifest'
 import {
   DEFAULT_CAPTION_STYLE,
+  type CaptionLayout,
   type CaptionStyle,
   type TranscriptState,
   type Word,
@@ -26,6 +27,18 @@ function cleanStyle(s: Partial<CaptionStyle> | undefined): CaptionStyle {
     background:
       typeof s?.background === 'boolean' ? s.background : d.background,
   }
+}
+
+function cleanLayout(
+  l: CaptionLayout | undefined,
+  ids: Set<string>,
+): CaptionLayout | undefined {
+  if (!l || !Array.isArray(l.breaks)) return undefined
+  const text: Record<string, string> = {}
+  if (l.text && typeof l.text === 'object')
+    for (const [k, v] of Object.entries(l.text))
+      if (ids.has(k) && typeof v === 'string') text[k] = v
+  return { breaks: l.breaks.filter((id) => ids.has(id)), text }
 }
 
 /** Read the transcript from a manifest; malformed data is treated as none. */
@@ -66,6 +79,7 @@ export function readTranscript(m: TranscribedManifest): TranscriptState | null {
     alignVersion: finite(t.alignVersion) ? t.alignVersion : t.aligned ? 1 : 0,
     shiftMs: finite(t.shiftMs) ? t.shiftMs : 0,
     captions: cleanStyle(t.captions),
+    captionLayout: cleanLayout(t.captionLayout, ids),
   }
 }
 

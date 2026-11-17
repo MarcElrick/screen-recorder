@@ -49,13 +49,33 @@ export interface TranscriptState {
   /** Long silences tightened by the optional tool (output ms). */
   silenceCuts: Range[]
   captions: CaptionStyle
+  /** Present once captions have been edited by hand; otherwise grouped automatically. */
+  captionLayout?: CaptionLayout
 }
 
 /** A caption line group on the *edited* timeline. */
 export interface Cue {
   startMs: number
   endMs: number
+  /** Caption text; "\n" marks a manual line break. */
   text: string
+  /** Id of the first word of the run this cue covers (stable key for edits). */
+  key?: string
+  /** What the words say, before any custom text. */
+  autoText?: string
+  /** The text was edited by hand. */
+  custom?: boolean
+}
+
+/**
+ * Hand-edited caption layout, stored on the transcript. `breaks` are the ids
+ * of the words that start a caption (the first word always does), so every
+ * word belongs to exactly one caption, deleted or not. `text` holds custom
+ * text keyed by the id of the first word of a caption.
+ */
+export interface CaptionLayout {
+  breaks: string[]
+  text: Record<string, string>
 }
 
 /** What the compositor draws for the current frame. */

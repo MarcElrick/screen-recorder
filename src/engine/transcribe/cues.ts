@@ -1,5 +1,5 @@
 import { outputToEdited, type EditList } from '../timeline/editlist'
-import type { Cue, Word } from './types'
+import type { CaptionLayout, Cue, Word } from './types'
 
 export interface CueOptions {
   maxChars: number
@@ -24,11 +24,41 @@ export function wordText(w: Word, edits: Record<string, string>): string {
 }
 
 interface Placed {
+  id: string
+  index: number
   text: string
   start: number // edited ms
   end: number
   outStart: number
   outEnd: number
+}
+
+/** Kept words with their position on the edited timeline. */
+function placeWords(
+  words: Word[],
+  deleted: ReadonlySet<string>,
+  edits: Record<string, string>,
+  edit: EditList,
+): Placed[] {
+  const placed: Placed[] = []
+  words.forEach((w, index) => {
+    if (deleted.has(w.id)) return
+    const text = wordText(w, edits)
+    if (!text) return
+    const a = outputToEdited(edit, w.startMs + 1)
+    const b = outputToEdited(edit, Math.max(w.startMs + 1, w.endMs - 1))
+    if (a === null || b === null) return // inside a timeline cut
+    placed.push({
+      id: w.id,
+      index,
+      text,
+      start: a,
+      end: Math.max(a + 1, b),
+      outStart: w.startMs,
+      outEnd: w.endMs,
+    })
+  })
+  return placed
 }
 
 /**
@@ -42,22 +72,7 @@ export function buildCues(
   edit: EditList,
   opts: CueOptions = DEFAULT_CUE_OPTIONS,
 ): Cue[] {
-  const placed: Placed[] = []
-  for (const w of words) {
-    if (deleted.has(w.id)) continue
-    const text = wordText(w, edits)
-    if (!text) continue
-    const a = outputToEdited(edit, w.startMs + 1)
-    const b = outputToEdited(edit, Math.max(w.startMs + 1, w.endMs - 1))
-    if (a === null || b === null) continue // inside a timeline cut
-    placed.push({
-      text,
-      start: a,
-      end: Math.max(a + 1, b),
-      outStart: w.startMs,
-      outEnd: w.endMs,
-    })
-  }
+  const placed = placeWords(words, deleted, edits, edit)
   const cues: Cue[] = []
   let cur: Placed[] = []
   const flush = (): void => {
@@ -66,10 +81,13 @@ export function buildCues(
     let end = cur[cur.length - 1].end
     if (end - start < opts.minMs) end = start + opts.minMs
     if (end - start > opts.maxMs) end = start + opts.maxMs
+    const text = cur.map((p) => p.text).join(' ')
     cues.push({
       startMs: start,
       endMs: end,
-      text: cur.map((p) => p.text).join(' '),
+      text,
+      autoText: text,
+      key: cur[0].id,
     })
     cur = []
   }
@@ -94,10 +112,61 @@ export function buildCues(
     cur.push(p)
   }
   flush()
-  // Don't let a stretched cue run into the next one.
+  return tidyCues(cues)
+}
+
+/** Stop overlapping cues running into each other, and drop empty ones. */
+function tidyCues(cues: Cue[]): Cue[] {
   for (let i = 0; i < cues.length - 1; i++)
     if (cues[i].endMs > cues[i + 1].startMs) cues[i].endMs = cues[i + 1].startMs
   return cues.filter((c) => c.endMs > c.startMs)
+}
+
+/**
+ * Cues from a hand-edited layout. Every word belongs to one caption (its
+ * run); a run's timing comes from the words in it that are still kept, and
+ * it disappears when none are. Custom text survives word deletes.
+ */
+export function buildCuesFromLayout(
+  words: Word[],
+  layout: CaptionLayout,
+  deleted: ReadonlySet<string>,
+  edits: Record<string, string>,
+  edit: EditList,
+  opts: CueOptions = DEFAULT_CUE_OPTIONS,
+): Cue[] {
+  const indexOf = new Map(words.map((w, i) => [w.id, i]))
+  const starts = [
+    ...new Set(
+      layout.breaks
+        .map((id) => indexOf.get(id))
+        .filter((i): i is number => i !== undefined && i > 0),
+    ),
+  ].sort((a, b) => a - b)
+  const runStarts = words.length ? [0, ...starts] : []
+  const placed = placeWords(words, deleted, edits, edit)
+  const cues: Cue[] = []
+  runStarts.forEach((from, r) => {
+    const to = r + 1 < runStarts.length ? runStarts[r + 1] : words.length
+    const run = placed.filter((p) => p.index >= from && p.index < to)
+    if (!run.length) return
+    const key = words[from].id
+    const autoText = run.map((p) => p.text).join(' ')
+    const custom = layout.text[key]
+    const start = run[0].start
+    let end = run[run.length - 1].end
+    if (end - start < opts.minMs) end = start + opts.minMs
+    if (end - start > opts.maxMs) end = start + opts.maxMs
+    cues.push({
+      startMs: start,
+      endMs: end,
+      text: custom !== undefined && custom.trim() ? custom : autoText,
+      autoText,
+      key,
+      custom: custom !== undefined && custom.trim() !== '',
+    })
+  })
+  return tidyCues(cues)
 }
 
 /** The cue showing at an edited time, if any. Cues are sorted. */
@@ -142,13 +211,25 @@ export function splitLines(text: string, maxLine = 42): string[] {
 }
 
 const cleanSub = (t: string): string =>
-  t.replace(/-->/g, '→').replace(/\r?\n+/g, ' ')
+  t
+    .replace(/-->/g, '→')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n{2,}/g, '\n')
+
+/** Manual line breaks win; otherwise balance into at most two lines. */
+const subLines = (t: string): string[] =>
+  t.includes('\n')
+    ? t
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+    : splitLines(t)
 
 export function toSrt(cues: Cue[]): string {
   return cues
     .map(
       (c, i) =>
-        `${i + 1}\n${stamp(c.startMs, ',')} --> ${stamp(c.endMs, ',')}\n${splitLines(cleanSub(c.text)).join('\n')}\n`,
+        `${i + 1}\n${stamp(c.startMs, ',')} --> ${stamp(c.endMs, ',')}\n${subLines(cleanSub(c.text)).join('\n')}\n`,
     )
     .join('\n')
 }
@@ -162,7 +243,7 @@ export function toVtt(cues: Cue[]): string {
     cues
       .map(
         (c) =>
-          `${stamp(c.startMs, '.')} --> ${stamp(c.endMs, '.')}\n${splitLines(escapeVtt(cleanSub(c.text))).join('\n')}\n`,
+          `${stamp(c.startMs, '.')} --> ${stamp(c.endMs, '.')}\n${subLines(escapeVtt(cleanSub(c.text))).join('\n')}\n`,
       )
       .join('\n')
   )

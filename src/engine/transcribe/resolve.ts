@@ -1,7 +1,7 @@
 import { readCompose, outputDuration } from '../session/compose'
 import type { ComposeState } from '../session/compose'
 import type { EditList } from '../timeline/editlist'
-import { buildCues } from './cues'
+import { buildCues, buildCuesFromLayout } from './cues'
 import { deriveEditList, transcriptCuts } from './cuts'
 import type { Envelope } from './envelope'
 import { readTranscript, type TranscribedManifest } from './state'
@@ -36,12 +36,16 @@ export function resolveEdit(
     compose.edit,
     transcriptCuts(transcript, envelope, total),
   )
-  const cues = buildCues(
-    transcript.words,
-    new Set(transcript.deletedWordIds),
-    transcript.text,
-    effective,
-  )
+  const deleted = new Set(transcript.deletedWordIds)
+  const cues = transcript.captionLayout
+    ? buildCuesFromLayout(
+        transcript.words,
+        transcript.captionLayout,
+        deleted,
+        transcript.text,
+        effective,
+      )
+    : buildCues(transcript.words, deleted, transcript.text, effective)
   return {
     compose,
     transcript,

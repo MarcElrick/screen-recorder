@@ -158,7 +158,10 @@ export function drawCaption(
   ctx.textBaseline = 'middle'
   const measure = (t: string): number => ctx.measureText!(t).width
   const maxW = out.width * 0.84
-  const lines = wrapCaption(c.text, maxW, measure).slice(-3)
+  const lines = c.text
+    .split('\n')
+    .flatMap((para) => wrapCaption(para, maxW, measure))
+    .slice(-4)
   const lineH = size * 1.3
   const padX = size * 0.6
   const padY = size * 0.35
