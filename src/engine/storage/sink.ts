@@ -41,9 +41,11 @@ export class OpfsSink implements ChunkSink {
   }
 }
 
-function isFirefox(): boolean {
+/** `?storage=memory` records in memory and writes on stop (for testing that path). */
+function forceMemory(): boolean {
   return (
-    typeof navigator !== 'undefined' && /firefox\//i.test(navigator.userAgent)
+    typeof location !== 'undefined' &&
+    /[?&]storage=memory\b/.test(location.search)
   )
 }
 
@@ -53,14 +55,14 @@ export function opfsSupported(): boolean {
 }
 
 /**
- * Whether chunks can be streamed to OPFS while recording. Firefox's writable
- * streams aren't reliable, so there takes are held in memory and written once
+ * Whether chunks can be streamed to OPFS while recording. Where the
+ * browser has no `createWritable`, takes are held in memory and written once
  * on stop (see `persistFile`).
  */
 export function canStreamToOpfs(): boolean {
   return (
     opfsSupported() &&
-    !isFirefox() &&
+    !forceMemory() &&
     typeof FileSystemFileHandle !== 'undefined' &&
     'createWritable' in FileSystemFileHandle.prototype
   )

@@ -1,21 +1,11 @@
 import { expect, test } from '@playwright/test'
 
-// Simulates the Firefox path (record in memory, write on stop via a worker)
-// in Chromium by presenting a Firefox user agent.
-test.use({
-  userAgent:
-    'Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0',
-})
-
+// Exercises the record-in-memory, write-on-stop path (used when a browser has
+// no createWritable) via `?storage=memory`.
 test('in-memory take is written to browser storage on stop', async ({
   page,
-  browserName,
 }) => {
-  test.skip(
-    browserName !== 'chromium',
-    'UA-simulated Firefox path, run in Chromium',
-  )
-  await page.goto('./')
+  await page.goto('./?storage=memory')
   await page.getByRole('button', { name: 'Choose screen' }).click()
   await page.getByRole('switch', { name: '3s countdown' }).click()
   await page.getByRole('button', { name: 'Start recording' }).click()
