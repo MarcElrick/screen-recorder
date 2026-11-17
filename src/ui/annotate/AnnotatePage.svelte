@@ -20,6 +20,7 @@
     onrecord: () => void
   } = $props()
 
+  const hasGpu = typeof navigator !== 'undefined' && 'gpu' in navigator
   const store = new AnnotateStore()
   onMount(() => void store.init(sessionId))
   onDestroy(() => {
@@ -218,7 +219,7 @@
   </div>
 {:else}
   <div class="page">
-    <header class="bar">
+    <header class="head">
       <h2>Annotate <span class="optional">optional</span></h2>
       {#if store.sessions.length > 1}
         <SelectField
@@ -265,6 +266,12 @@
           onchange={(v) => store.setModel(v as ModelId)}
         />
         <p class="hint">{MODELS[store.model].hint}</p>
+        {#if MODELS[store.model].needsGpu && !hasGpu}
+          <p class="error" role="alert">
+            This browser has no WebGPU, so this model would be very slow here.
+            Base or Small are better choices.
+          </p>
+        {/if}
         <SelectField
           label="Language"
           value={store.language}
@@ -421,6 +428,18 @@
             checked={store.transcript.captions.background}
             onchange={(v) => store.setCaptions({ background: v })}
           />
+          <h3>Word timing</h3>
+          <p class="hint">
+            If cuts clip a word, nudge every word earlier or later and replay.
+            {#if store.transcript.shiftMs}
+              Shifted {store.transcript.shiftMs > 0 ? '+' : ''}{store.transcript
+                .shiftMs} ms.
+            {/if}
+          </p>
+          <div class="actions">
+            <Button onclick={() => store.shiftWords(-20)}>Earlier 20 ms</Button>
+            <Button onclick={() => store.shiftWords(20)}>Later 20 ms</Button>
+          </div>
           <h3>Clean up</h3>
           {#if store.fillers.length}
             <p class="hint">Filler words found (when the model kept them):</p>
@@ -486,12 +505,12 @@
     gap: var(--space-4);
     padding: var(--space-4);
   }
-  .bar {
+  .head {
     display: flex;
     align-items: center;
     gap: var(--space-3);
   }
-  .bar h2 {
+  .head h2 {
     margin: 0;
     font-size: var(--text-lg);
   }

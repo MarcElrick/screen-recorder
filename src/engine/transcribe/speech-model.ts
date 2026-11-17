@@ -144,7 +144,11 @@ export class SpeechModel {
       this.loadReject = reject
     })
     this.loading.catch(() => {})
-    const msg: ToWhisper = { type: 'load', repo: MODELS[model].repo }
+    const msg: ToWhisper = {
+      type: 'load',
+      repo: MODELS[model].repo,
+      dtype: MODELS[model].webgpuDtype,
+    }
     worker.postMessage(msg)
     return this.loading
   }

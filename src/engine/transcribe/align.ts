@@ -12,10 +12,13 @@ export interface AlignOptions {
   minWordMs: number
 }
 
+/** Bump when alignWords changes so stored transcripts are re-aligned. */
+export const ALIGN_VERSION = 2
+
 export const DEFAULT_ALIGN_OPTIONS: AlignOptions = {
   maxShiftMs: 200,
   leadMs: 15,
-  tailMs: 25,
+  tailMs: 10,
   minWordMs: 40,
 }
 
@@ -92,34 +95,58 @@ export function alignWords(
     return null
   }
 
-  const out = words.map((x) => ({ ...x }))
-  for (let k = 0; k < out.length; k++) {
-    const cur = out[k]
-    const prevEnd = k > 0 ? out[k - 1].endMs : 0
-    const nextStart = k + 1 < words.length ? words[k + 1].startMs : Infinity
-    const startLo = Math.max(prevEnd, cur.startMs - opts.maxShiftMs)
+  // Pass 1: detect each word's edges from the audio, from Whisper's raw times.
+  const raw = words.map((x) => ({
+    startMs: x.rawStartMs ?? x.startMs,
+    endMs: x.rawEndMs ?? x.endMs,
+  }))
+  const det = raw.map((r, k) => {
+    const prevEnd = k > 0 ? raw[k - 1].endMs : 0
+    const nextStart = k + 1 < raw.length ? raw[k + 1].startMs : Infinity
+    const startLo = Math.max(prevEnd, r.startMs - opts.maxShiftMs)
     const startHi = Math.min(
-      cur.endMs - opts.minWordMs,
-      cur.startMs + opts.maxShiftMs,
+      r.endMs - opts.minWordMs,
+      r.startMs + opts.maxShiftMs,
     )
     const onset =
-      startHi >= startLo ? findOnset(cur.startMs, startLo, startHi) : null
-    let start = cur.startMs
-    if (onset !== null) start = Math.max(startLo, onset - opts.leadMs)
-    start = Math.min(Math.max(start, startLo), Math.max(startLo, startHi))
-
-    const endHi = Math.min(nextStart, cur.endMs + opts.maxShiftMs)
-    const endLo = Math.max(start + opts.minWordMs, cur.endMs - opts.maxShiftMs)
-    const offset = endHi >= endLo ? findOffset(cur.endMs, endLo, endHi) : null
-    let end = cur.endMs
-    if (offset !== null) end = Math.min(endHi, offset + opts.tailMs)
-    end = Math.max(
-      Math.min(end, Math.max(endLo, endHi)),
-      start + opts.minWordMs,
+      startHi >= startLo ? findOnset(r.startMs, startLo, startHi) : null
+    const endHi = Math.min(nextStart, r.endMs + opts.maxShiftMs)
+    const endLo = Math.max(
+      r.startMs + opts.minWordMs,
+      r.endMs - opts.maxShiftMs,
     )
-
-    cur.startMs = Math.round(start)
-    cur.endMs = Math.round(end)
+    const offset = endHi >= endLo ? findOffset(r.endMs, endLo, endHi) : null
+    return {
+      start: onset === null ? null : onset - opts.leadMs,
+      end: offset === null ? null : offset + opts.tailMs,
+    }
+  })
+  // Whisper's timestamps are often late by a fairly constant amount. Where
+  // the audio gives a clear edge we can measure that lag, and apply it to the
+  // words (fluent speech) that have no gap to find an edge in.
+  const median = (xs: number[]): number => {
+    if (xs.length < 4) return 0
+    const s = [...xs].sort((a, b) => a - b)
+    return Math.max(-250, Math.min(250, s[Math.floor(s.length / 2)]))
+  }
+  const lagStart = median(
+    det.flatMap((d, k) => (d.start === null ? [] : [raw[k].startMs - d.start])),
+  )
+  const lagEnd = median(
+    det.flatMap((d, k) => (d.end === null ? [] : [raw[k].endMs - d.end])),
+  )
+  const out = words.map((x) => ({ ...x }))
+  for (let k = 0; k < out.length; k++) {
+    const r = raw[k]
+    const d = det[k]
+    let start = d.start ?? r.startMs - lagStart
+    start = Math.max(start, 0)
+    let end = d.end ?? r.endMs - lagEnd
+    end = Math.max(end, start + opts.minWordMs)
+    out[k].rawStartMs = r.startMs
+    out[k].rawEndMs = r.endMs
+    out[k].startMs = Math.round(start)
+    out[k].endMs = Math.round(end)
   }
   // Keep strictly ordered even when two words touch.
   for (let k = 1; k < out.length; k++)

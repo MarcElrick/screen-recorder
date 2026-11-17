@@ -7,6 +7,10 @@ export interface ModelInfo {
   repo: string
   approxMb: number
   hint: string
+  /** Too slow to be practical without WebGPU. */
+  needsGpu?: boolean
+  /** Weights precision on WebGPU (large encoders must be fp16 to fit). */
+  webgpuDtype?: Record<string, string>
 }
 
 export const MODELS: Record<ModelId, ModelInfo> = {
@@ -31,6 +35,15 @@ export const MODELS: Record<ModelId, ModelInfo> = {
     approxMb: 350,
     hint: 'More accurate, slow without a GPU',
   },
+  large: {
+    id: 'large',
+    label: 'Large (turbo)',
+    repo: 'onnx-community/whisper-large-v3-turbo_timestamped',
+    approxMb: 1500,
+    hint: 'Best accuracy and timing. Needs a good GPU and a big one-time download',
+    needsGpu: true,
+    webgpuDtype: { encoder_model: 'fp16', decoder_model_merged: 'q4' },
+  },
 }
 
 export const DEFAULT_MODEL: ModelId = 'base'
@@ -50,7 +63,12 @@ export interface ModelState {
 
 /** Messages between the app and the Whisper worker. */
 export type ToWhisper =
-  | { type: 'load'; repo: string; device?: 'webgpu' | 'wasm' }
+  | {
+      type: 'load'
+      repo: string
+      device?: 'webgpu' | 'wasm'
+      dtype?: Record<string, string>
+    }
   | { type: 'transcribe'; audio: Float32Array; language?: string }
 
 export type FromWhisper =

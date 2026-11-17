@@ -24,36 +24,35 @@ export function computeEnvelope(
 }
 
 /**
- * Move `ms` to the quietest point within +/- `radiusMs`, limited to
- * [minMs, maxMs]. Ties go to the point nearest the original.
+ * Move `ms` to a quiet point within [ms - backMs, ms + forwardMs], limited to
+ * [minMs, maxMs]. Energy is weighted by distance, so in continuous speech
+ * (no real silence) the edge stays put instead of wandering to a random dip.
  */
 export function snapToSilence(
   env: Envelope | null,
   ms: number,
-  radiusMs: number,
+  backMs: number,
   minMs: number,
   maxMs: number,
+  forwardMs = backMs,
 ): number {
   const clamp = (v: number): number => Math.min(Math.max(v, minMs), maxMs)
   if (!env || env.rms.length === 0 || maxMs < minMs) return clamp(ms)
   const w = env.windowMs
-  const lo = Math.max(minMs, ms - radiusMs)
-  const hi = Math.min(maxMs, ms + radiusMs)
+  const lo = Math.max(minMs, ms - backMs)
+  const hi = Math.min(maxMs, ms + forwardMs)
   if (hi < lo) return clamp(ms)
   let best = clamp(ms)
-  let bestVal = Infinity
+  let bestScore = Infinity
   const off = env.offsetMs ?? 0
   const first = Math.floor((lo - off) / w)
   const last = Math.floor((hi - off) / w)
   for (let i = first; i <= last && i < env.rms.length; i++) {
     if (i < 0) continue
     const at = clamp(off + i * w + w / 2)
-    const v = env.rms[i]
-    if (
-      v < bestVal - 1e-9 ||
-      (Math.abs(v - bestVal) <= 1e-9 && Math.abs(at - ms) < Math.abs(best - ms))
-    ) {
-      bestVal = v
+    const score = env.rms[i] * (1 + Math.abs(at - ms) / 100)
+    if (score < bestScore - 1e-12) {
+      bestScore = score
       best = at
     }
   }

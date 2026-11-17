@@ -73,3 +73,34 @@ describe('alignWords', () => {
     expect(out[1].startMs).toBeGreaterThanOrEqual(out[0].endMs)
   })
 })
+
+describe('systematic lag', () => {
+  it('measures a constant lag from clear edges and applies it to fluent words', () => {
+    const e = env(7000, [
+      [500, 900],
+      [1500, 1900],
+      [2500, 2900],
+      [3500, 3900],
+      [4500, 5300],
+    ])
+    const lag = 80
+    const truth: [number, number][] = [
+      [500, 900],
+      [1500, 1900],
+      [2500, 2900],
+      [3500, 3900],
+      [4500, 4900],
+      [4900, 5300],
+    ]
+    const words = truth.map(([a, b], i) => word(i, a + lag, b + lag))
+    const out = alignWords(words, e)
+    // The second fluent word has no silence to find; the measured lag fixes it.
+    expect(Math.abs(out[5].startMs - 4900)).toBeLessThanOrEqual(35)
+    expect(out[5].startMs).toBeLessThan(4900 + lag - 30)
+    // Original times are kept so alignment can be redone.
+    expect(out[5].rawStartMs).toBe(4900 + lag)
+    // Re-aligning aligned words starts again from the raw times.
+    const again = alignWords(out, e)
+    expect(again.map((w) => w.startMs)).toEqual(out.map((w) => w.startMs))
+  })
+})

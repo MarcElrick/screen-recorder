@@ -4,6 +4,7 @@ import {
   History,
   SessionLoadError,
   SpeechModel,
+  ALIGN_VERSION,
   alignWords,
   detectFillers,
   listSessions,
@@ -135,9 +136,12 @@ export class AnnotateStore {
       this.transcript = readTranscript(s.manifest)
       this.envelope = await readCachedJson<Envelope>(id, 'envelope.json')
       // Transcripts made before timing alignment get it once, from the cached envelope.
-      if (this.transcript && !this.transcript.aligned && this.envelope) {
-        this.transcript.words = alignWords(this.transcript.words, this.envelope)
-        this.transcript.aligned = true
+      if (
+        this.transcript &&
+        (this.transcript.alignVersion ?? 0) < ALIGN_VERSION &&
+        this.envelope
+      ) {
+        this.realign()
         void this.persist()
       }
       this.history = this.transcript
@@ -258,6 +262,8 @@ export class AnnotateStore {
         createdAt: new Date().toISOString(),
         words: alignWords(out.words, audio.envelope),
         aligned: true,
+        alignVersion: ALIGN_VERSION,
+        shiftMs: 0,
         text: {},
         deletedWordIds: [],
         silenceCuts: [],
@@ -375,6 +381,41 @@ export class AnnotateStore {
     if (!clean || clean === w.text) delete this.transcript.text[id]
     else this.transcript.text[id] = clean
     this.commit()
+  }
+
+  /** Re-run the audio alignment from Whisper's raw times, then re-apply any manual shift. */
+  private realign(): void {
+    const t = this.transcript
+    if (!t || !this.envelope) return
+    const shift = t.shiftMs ?? 0
+    const aligned = alignWords(
+      $state.snapshot(t.words) as Word[],
+      this.envelope,
+    )
+    t.words = shift ? this.shifted(aligned, shift) : aligned
+    t.aligned = true
+    t.alignVersion = ALIGN_VERSION
+  }
+
+  private shifted(words: Word[], deltaMs: number): Word[] {
+    const total = this.total
+    return words.map((w) => {
+      const startMs = Math.min(Math.max(0, w.startMs + deltaMs), total - 1)
+      return {
+        ...w,
+        startMs,
+        endMs: Math.min(Math.max(startMs + 1, w.endMs + deltaMs), total),
+      }
+    })
+  }
+
+  /** Move every word earlier (negative) or later by `deltaMs`: a manual timing fix. */
+  shiftWords(deltaMs: number): void {
+    const t = this.transcript
+    if (!t) return
+    t.words = this.shifted($state.snapshot(t.words) as Word[], deltaMs)
+    t.shiftMs = (t.shiftMs ?? 0) + deltaMs
+    void this.persist()
   }
 
   setCaptions(patch: Partial<TranscriptState['captions']>): void {

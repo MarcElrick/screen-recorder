@@ -5,6 +5,11 @@ import type { Word } from './types'
 export interface CutOptions {
   /** How far a cut edge may move to find silence. */
   snapRadiusMs: number
+  /**
+   * How far a cut edge may move *later*. Kept small: timestamps tend to run
+   * late, and a late edge removes audio that belongs to the next word.
+   */
+  snapForwardMs: number
   /** Kept before the next kept word (so its onset isn't clipped). */
   padBeforeMs: number
   /** Kept after the previous kept word (so its tail isn't clipped). */
@@ -13,6 +18,7 @@ export interface CutOptions {
 
 export const DEFAULT_CUT_OPTIONS: CutOptions = {
   snapRadiusMs: 120,
+  snapForwardMs: 30,
   padBeforeMs: 30,
   padAfterMs: 20,
 }
@@ -50,6 +56,7 @@ export function wordCutRanges(
         opts.snapRadiusMs,
         minMs,
         maxMs,
+        opts.snapForwardMs,
       )
       const b = snapToSilence(
         env,
@@ -57,6 +64,7 @@ export function wordCutRanges(
         opts.snapRadiusMs,
         minMs,
         maxMs,
+        opts.snapForwardMs,
       )
       const start = Math.min(a, b)
       const end = Math.max(a, b)

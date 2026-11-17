@@ -55,6 +55,34 @@ test('skip goes straight to Compose; deleting a word shortens the take and expor
   expect(total).toBeLessThan(4000)
   await expect(page.getByRole('group', { name: 'Captions' })).toBeVisible()
 
+  // The caption shows in the Compose preview (white text near the bottom).
+  await playhead.focus()
+  await page.keyboard.press('ArrowRight') // 1 s
+  await expect
+    .poll(
+      async () => {
+        const png = await page.locator('canvas').first().screenshot()
+        return page.evaluate(async (b64) => {
+          const img = new Image()
+          img.src = `data:image/png;base64,${b64}`
+          await img.decode()
+          const c = document.createElement('canvas')
+          c.width = img.width
+          c.height = img.height
+          const ctx = c.getContext('2d')!
+          ctx.drawImage(img, 0, 0)
+          const y0 = Math.floor(img.height * 0.75)
+          const d = ctx.getImageData(0, y0, img.width, img.height - y0).data
+          let white = 0
+          for (let i = 0; i < d.length; i += 4)
+            if (d[i] > 235 && d[i + 1] > 235 && d[i + 2] > 235) white++
+          return white
+        }, png.toString('base64'))
+      },
+      { timeout: 10_000 },
+    )
+    .toBeGreaterThan(30)
+
   // Survives a reload (stored in session.json).
   await page.reload()
   await page.getByRole('button', { name: /Compose/ }).click()

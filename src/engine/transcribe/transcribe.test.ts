@@ -63,6 +63,17 @@ describe('word cuts', () => {
     expect(c.startMs).toBeGreaterThanOrEqual(420)
     expect(c.endMs).toBeLessThanOrEqual(970)
   })
+  it('does not let a cut end run far past the word in continuous speech', () => {
+    // Flat energy: no silence to find, so the edge must stay near the word end.
+    const env = computeEnvelope(new Float32Array(5000).fill(0.2), 1000)
+    const tight: Word[] = [
+      mk('a', 0, 400, 0),
+      mk('b', 400, 800, 1),
+      mk('c', 800, 1200, 2),
+    ]
+    const [c] = wordCutRanges(tight, new Set(['w1']), env, 5000)
+    expect(c.endMs).toBeLessThanOrEqual(800 + 30)
+  })
   it('handles deleting the first and last word', () => {
     expect(wordCutRanges(words, new Set(['w0']), null, 4200)[0].startMs).toBe(0)
     const last = wordCutRanges(words, new Set(['w4']), null, 4200)[0]

@@ -6,6 +6,9 @@ export interface Word {
   text: string
   startMs: number
   endMs: number
+  /** Whisper's own times, kept so alignment can be redone. */
+  rawStartMs?: number
+  rawEndMs?: number
 }
 
 export type CaptionPosition = 'bottom' | 'top'
@@ -25,7 +28,7 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   background: true,
 }
 
-export type ModelId = 'tiny' | 'base' | 'small'
+export type ModelId = 'tiny' | 'base' | 'small' | 'large'
 
 /** Transcript stored in session.json under `transcript`. */
 export interface TranscriptState {
@@ -39,6 +42,10 @@ export interface TranscriptState {
   deletedWordIds: string[]
   /** Word times were aligned to the audio energy (see alignWords). */
   aligned?: boolean
+  /** Alignment algorithm version (re-run when it changes). */
+  alignVersion?: number
+  /** Manual shift applied to every word, for display (ms; negative = earlier). */
+  shiftMs?: number
   /** Long silences tightened by the optional tool (output ms). */
   silenceCuts: Range[]
   captions: CaptionStyle

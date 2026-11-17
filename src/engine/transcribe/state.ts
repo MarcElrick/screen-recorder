@@ -63,6 +63,8 @@ export function readTranscript(m: TranscribedManifest): TranscriptState | null {
       : [],
     silenceCuts,
     aligned: t.aligned === true,
+    alignVersion: finite(t.alignVersion) ? t.alignVersion : t.aligned ? 1 : 0,
+    shiftMs: finite(t.shiftMs) ? t.shiftMs : 0,
     captions: cleanStyle(t.captions),
   }
 }

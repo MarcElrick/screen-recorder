@@ -31,7 +31,11 @@ async function hasWebGpu(): Promise<boolean> {
   }
 }
 
-async function load(repo: string, wanted?: 'webgpu' | 'wasm'): Promise<void> {
+async function load(
+  repo: string,
+  wanted?: 'webgpu' | 'wasm',
+  webgpuDtype?: Record<string, string>,
+): Promise<void> {
   if (recognizer && loadedRepo === repo) {
     scope.postMessage({ type: 'ready', device: lastDevice })
     return
@@ -50,7 +54,7 @@ async function load(repo: string, wanted?: 'webgpu' | 'wasm'): Promise<void> {
   }
   const dtype =
     device === 'webgpu'
-      ? { encoder_model: 'fp32', decoder_model_merged: 'q4' }
+      ? (webgpuDtype ?? { encoder_model: 'fp32', decoder_model_merged: 'q4' })
       : 'q8'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const make = pipeline as any
@@ -87,7 +91,7 @@ scope.onmessage = async (e) => {
   const m = e.data
   try {
     if (m.type === 'load') {
-      await load(m.repo, m.device)
+      await load(m.repo, m.device, m.dtype)
     } else if (m.type === 'transcribe') {
       if (!recognizer) throw new Error('The speech model is not loaded.')
       const out = await recognizer(m.audio, {
