@@ -60,4 +60,21 @@ describe('session state machine', () => {
     s = run([{ type: 'start', countdown: false }], s)
     expect(s.notices).toEqual([])
   })
+
+  it('a camera alone is enough to start (camera-only take)', () => {
+    const s = run([{ type: 'cameraChosen' }])
+    expect(s.phase).toBe('ready')
+    expect(run([{ type: 'start', countdown: false }], s).phase).toBe(
+      'recording',
+    )
+  })
+
+  it('losing the only source goes back to idle, but keeps ready if another remains', () => {
+    const both = run([{ type: 'screenChosen' }, { type: 'cameraChosen' }])
+    expect(run([{ type: 'cameraLost' }], both).phase).toBe('ready')
+    expect(run([{ type: 'screenLost' }], both).phase).toBe('ready')
+    expect(
+      run([{ type: 'cameraLost' }, { type: 'screenLost' }], both).phase,
+    ).toBe('idle')
+  })
 })

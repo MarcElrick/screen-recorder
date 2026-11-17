@@ -17,6 +17,8 @@ export interface ManifestTrack {
 export interface SessionManifest {
   version: 1
   id: string
+  /** What the main video track is: the screen, or the camera for camera-only takes. */
+  mainSource?: 'screen' | 'camera'
   /** Optional name given in the Takes list. */
   name?: string
   createdAt: string
@@ -35,6 +37,7 @@ export function buildManifest(args: {
   pauses: Interval[]
   tracks: TrackResult[]
   bubble: SessionManifest['bubble']
+  mainSource?: 'screen' | 'camera'
 }): SessionManifest {
   return {
     version: 1,
@@ -56,5 +59,6 @@ export function buildManifest(args: {
       sizeBytes: t.blob.size,
     })),
     bubble: args.bubble,
+    mainSource: args.mainSource,
   }
 }

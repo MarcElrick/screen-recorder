@@ -19,10 +19,15 @@
     { id: MIC_DEFAULT, label: 'System default' },
     ...r.mics.filter((m) => m.id !== 'default'),
   ])
+  const cameraHasVideo = $derived(
+    (r.cameraStream?.getVideoTracks().length ?? 0) > 0,
+  )
   const recording = $derived(r.phase === 'recording')
   const paused = $derived(r.phase === 'paused')
   const live = $derived(recording || paused)
-  const canStart = $derived(r.phase === 'ready')
+  const canStart = $derived(
+    r.phase === 'ready' || (r.phase === 'done' && r.session.hasCamera),
+  )
   const sidebarLocked = $derived(r.busy)
 
   const status = $derived(
@@ -63,15 +68,33 @@
       <div class="frame">
         {#if r.screenStream}
           <StreamVideo stream={r.screenStream} label="Screen preview" />
+        {:else if r.cameraStream && r.cameraOn && cameraHasVideo}
+          <StreamVideo
+            stream={r.cameraStream}
+            label="Camera preview"
+            mirror
+            cover
+          />
+          <div class="camonly">
+            <span>Camera only. Choose a screen to record it too.</span>
+            <Button
+              disabled={sidebarLocked}
+              onclick={() => void r.chooseScreen()}
+            >
+              Choose screen
+            </Button>
+          </div>
         {:else}
           <div class="empty">
-            <p>Choose a screen, window or tab to record.</p>
+            <p>
+              Choose a screen, window or tab to record, or turn on your camera.
+            </p>
             <Button variant="primary" onclick={() => void r.chooseScreen()}
               >Choose screen</Button
             >
           </div>
         {/if}
-        {#if r.cameraStream && r.cameraOn}
+        {#if r.screenStream && r.cameraStream && r.cameraOn}
           <div
             class="bubble"
             style="left:{bubble.x * 100}%;top:{bubble.y *
@@ -246,6 +269,20 @@
       left var(--dur),
       top var(--dur),
       width var(--dur);
+  }
+  .camonly {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    background: rgb(0 0 0 / 0.55);
+    color: #fff;
+    font-size: var(--text-sm);
   }
   .countdown {
     position: absolute;

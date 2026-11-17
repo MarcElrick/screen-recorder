@@ -11,6 +11,8 @@ export type Phase =
 export interface SessionState {
   phase: Phase
   hasScreen: boolean
+  /** A camera with video is ready, so a camera-only take is possible. */
+  hasCamera: boolean
   error?: string
   /** Non-fatal notices (camera unplugged, sharing stopped, ...). */
   notices: string[]
@@ -19,6 +21,8 @@ export interface SessionState {
 export type SessionEvent =
   | { type: 'screenChosen' }
   | { type: 'screenLost' }
+  | { type: 'cameraChosen' }
+  | { type: 'cameraLost' }
   | { type: 'start'; countdown: boolean }
   | { type: 'countdownDone' }
   | { type: 'cancelCountdown' }
@@ -33,6 +37,7 @@ export type SessionEvent =
 export const initialState: SessionState = {
   phase: 'idle',
   hasScreen: false,
+  hasCamera: false,
   notices: [],
 }
 
@@ -48,10 +53,27 @@ export function reduce(s: SessionState, e: SessionEvent): SessionState {
         return { ...s, phase: 'ready', hasScreen: true, error: undefined }
       return s
     case 'screenLost':
-      if (s.phase === 'ready') return { ...s, phase: 'idle', hasScreen: false }
-      return s
+      if (s.phase === 'ready')
+        return {
+          ...s,
+          phase: s.hasCamera ? 'ready' : 'idle',
+          hasScreen: false,
+        }
+      return { ...s, hasScreen: false }
+    case 'cameraChosen':
+      if (s.phase === 'idle' || s.phase === 'ready' || s.phase === 'error')
+        return { ...s, phase: 'ready', hasCamera: true, error: undefined }
+      return { ...s, hasCamera: true }
+    case 'cameraLost':
+      if (s.phase === 'ready')
+        return {
+          ...s,
+          phase: s.hasScreen ? 'ready' : 'idle',
+          hasCamera: false,
+        }
+      return { ...s, hasCamera: false }
     case 'start':
-      if (s.phase !== 'ready') return s
+      if (s.phase !== 'ready' && !(s.phase === 'done' && s.hasCamera)) return s
       return {
         ...s,
         phase: e.countdown ? 'countdown' : 'recording',
@@ -71,7 +93,7 @@ export function reduce(s: SessionState, e: SessionEvent): SessionState {
         : s
     case 'stopped':
       return s.phase === 'stopping'
-        ? { ...s, phase: 'done', hasScreen: false }
+        ? { ...s, phase: 'done', hasScreen: false, hasCamera: false }
         : s
     case 'notice':
       return { ...s, notices: [...s.notices, e.message] }

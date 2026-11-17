@@ -44,6 +44,9 @@ export interface SessionSummary {
   durationMs: number
   sizeBytes: number
   hasCamera: boolean
+  /** The camera file has video (not just the mic). */
+  hasCameraVideo: boolean
+  mainSource?: 'screen' | 'camera'
   hasAudio: boolean
 }
 
@@ -55,6 +58,11 @@ function summarise(m: SessionManifest, fallbackId: string): SessionSummary {
     durationMs: m.durationMs,
     sizeBytes: m.tracks.reduce((n, t) => n + (t.sizeBytes ?? 0), 0),
     hasCamera: m.tracks.some((t) => t.kind === 'camera'),
+    // Camera-only takes keep the camera video in the main track.
+    hasCameraVideo:
+      m.mainSource !== 'camera' &&
+      m.tracks.some((t) => t.kind === 'camera' && !t.mime.startsWith('audio/')),
+    mainSource: m.mainSource,
     hasAudio: m.tracks.some((t) => t.hasAudio),
   }
 }

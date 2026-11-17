@@ -106,6 +106,9 @@ export class SessionController {
   setCamera(stream: MediaStream | null): void {
     this.camera?.getTracks().forEach((t) => t.stop())
     this.camera = stream
+    if (stream && stream.getVideoTracks().length > 0)
+      this.dispatch({ type: 'cameraChosen' })
+    else this.dispatch({ type: 'cameraLost' })
   }
 
   setBubble(b: BubbleSettings | null): void {
@@ -113,7 +116,12 @@ export class SessionController {
   }
 
   async start(opts: { countdownSeconds?: number } = {}): Promise<void> {
-    if (this.state.phase !== 'ready' || !this.screen) return
+    if (
+      (this.state.phase !== 'ready' &&
+        !(this.state.phase === 'done' && this.state.hasCamera)) ||
+      (!this.screen && !this.hasCameraVideo)
+    )
+      return
     const secs = opts.countdownSeconds ?? 0
     this.dispatch({ type: 'start', countdown: secs > 0 })
     if (secs > 0) {
@@ -141,6 +149,7 @@ export class SessionController {
       const sinkFactory = this.deps.sinkFactory ?? defaultSinkFactory
       this.sessionId = this.deps.id?.() ?? `take-${Date.now()}`
       this.startedAt = new Date()
+      this.cameraOnly = false
       this.clock = this.deps.clock?.() ?? new SessionClock()
       const mk = async (
         kind: TrackKind,
@@ -169,9 +178,24 @@ export class SessionController {
               message: `Writing the ${k} file failed: ${err instanceof Error ? err.message : err}`,
             }),
         })
-      this.recorders = [await mk('screen', 'screen.webm', this.screen!)]
-      if (this.camera)
-        this.recorders.push(await mk('camera', 'camera.webm', this.camera))
+      this.recorders = []
+      if (this.screen) {
+        this.recorders.push(await mk('screen', 'screen.webm', this.screen))
+        if (this.camera)
+          this.recorders.push(await mk('camera', 'camera.webm', this.camera))
+      } else if (this.camera) {
+        // Camera-only take: the camera video is the main track, and the mic (if
+        // any) goes in an audio-only "camera" file, so Compose and Export need
+        // no special case.
+        this.cameraOnly = true
+        const video = new MediaStream(this.camera.getVideoTracks())
+        this.recorders.push(await mk('screen', 'screen.webm', video))
+        const audio = this.camera.getAudioTracks()
+        if (audio.length)
+          this.recorders.push(
+            await mk('camera', 'camera.webm', new MediaStream(audio)),
+          )
+      }
       this.clock.start()
       for (const r of this.recorders) r.start()
       this.startJournal()
@@ -183,7 +207,20 @@ export class SessionController {
     }
   }
 
+  private get hasCameraVideo(): boolean {
+    return (this.camera?.getVideoTracks().length ?? 0) > 0
+  }
+
   private onTrackEnded(kind: TrackKind): void {
+    if (this.cameraOnly && kind === 'screen') {
+      this.dispatch({
+        type: 'notice',
+        message: 'Camera disconnected. Your take was saved.',
+      })
+      void this.stop()
+      return
+    }
+    if (this.cameraOnly) return
     if (kind === 'camera') {
       this.dispatch({
         type: 'notice',
@@ -192,6 +229,7 @@ export class SessionController {
     }
   }
 
+  private cameraOnly = false
   private journal: JournalWriter | null = null
   private journalTracks: JournalTrack[] = []
 
@@ -290,10 +328,14 @@ export class SessionController {
       durationMs,
       pauses,
       tracks,
-      bubble: this.bubble && {
-        settings: this.bubble,
-        placement: bubblePlacement(this.bubble),
-      },
+      bubble:
+        this.bubble && !this.cameraOnly
+          ? {
+              settings: this.bubble,
+              placement: bubblePlacement(this.bubble),
+            }
+          : null,
+      mainSource: this.cameraOnly ? 'camera' : 'screen',
     })
     let persisted = false
     try {

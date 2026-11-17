@@ -4,6 +4,7 @@ import { MemorySink } from '../storage/sink'
 import { SessionController } from './controller'
 
 class FakeTrack extends EventTarget {
+  kind = 'video'
   readyState: 'live' | 'ended' = 'live'
   stop(): void {
     this.readyState = 'ended'
@@ -174,5 +175,61 @@ describe('stopping never hangs', () => {
     expect(await c.stop()).toBeNull()
     expect(c.state.phase).toBe('error')
     expect(c.state.error).toMatch(/disk exploded/)
+  })
+})
+
+describe('camera-only takes', () => {
+  beforeEach(() => {
+    ;(globalThis as unknown as { MediaStream: unknown }).MediaStream = class {
+      constructor(public tracks: FakeTrack[]) {}
+      getTracks = (): FakeTrack[] => this.tracks
+      getVideoTracks = (): FakeTrack[] =>
+        this.tracks.filter((t) => t.kind === 'video')
+      getAudioTracks = (): FakeTrack[] =>
+        this.tracks.filter((t) => t.kind === 'audio')
+    }
+  })
+
+  const camStream = (audio: boolean): MediaStream => {
+    const v = new FakeTrack()
+    v.kind = 'video'
+    const tracks = [v]
+    if (audio) {
+      const a = new FakeTrack()
+      a.kind = 'audio'
+      tracks.push(a)
+    }
+    return new (
+      globalThis as unknown as {
+        MediaStream: new (t: FakeTrack[]) => MediaStream
+      }
+    ).MediaStream(tracks)
+  }
+
+  it('records the camera as the main track and the mic as an audio file', async () => {
+    const c = make()
+    c.setCamera(camStream(true))
+    expect(c.state.phase).toBe('ready')
+    await c.start()
+    expect(recorders).toHaveLength(2)
+    const out = await c.stop()
+    expect(out!.manifest.mainSource).toBe('camera')
+    expect(out!.manifest.bubble).toBeNull()
+    expect(out!.manifest.tracks.map((t) => [t.kind, t.hasAudio])).toEqual([
+      ['screen', false],
+      ['camera', true],
+    ])
+  })
+
+  it('works without a mic, and stops cleanly if the camera is unplugged', async () => {
+    const c = make()
+    const cam = camStream(false)
+    c.setCamera(cam)
+    await c.start()
+    expect(recorders).toHaveLength(1)
+    ;(cam.getVideoTracks() as unknown as FakeTrack[])[0].end()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(c.state.phase).toBe('done')
+    expect(c.state.notices.join()).toMatch(/camera disconnected/i)
   })
 })

@@ -169,7 +169,11 @@ export class ComposeStore {
     for (const t of m.tracks) {
       const e = trackExtent(m.pauses, t)
       if (t.kind === 'screen') {
-        rows.push({ id: 'screen', label: 'Screen', ...e })
+        rows.push({
+          id: 'screen',
+          label: m.mainSource === 'camera' ? 'Camera' : 'Screen',
+          ...e,
+        })
       } else {
         if (this.hasCameraVideo)
           rows.push({

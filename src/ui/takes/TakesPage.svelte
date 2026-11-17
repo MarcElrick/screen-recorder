@@ -30,6 +30,16 @@
   let toDelete = $state<SessionSummary | null>(null)
   let confirmAll = $state(false)
 
+  function summary(t: SessionSummary): string {
+    const base =
+      t.mainSource === 'camera'
+        ? 'camera only'
+        : t.hasCameraVideo
+          ? 'screen + camera'
+          : 'screen only'
+    return base + (t.hasAudio ? ' + mic' : '')
+  }
+
   const total = $derived(takes.reduce((n, t) => n + t.sizeBytes, 0))
   const usedPct = $derived(
     usage ? Math.min(100, (usage.usage / usage.quota) * 100) : 0,
@@ -137,9 +147,7 @@
               {new Date(t.createdAt).toLocaleString()} · {formatTime(
                 t.durationMs,
               )} · {formatBytes(t.sizeBytes)}
-              · {t.hasCamera ? 'screen + camera' : 'screen only'}{t.hasAudio
-                ? ' + mic'
-                : ''}
+              · {summary(t)}
             </span>
           </div>
           <div class="actions">

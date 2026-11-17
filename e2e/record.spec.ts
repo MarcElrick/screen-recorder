@@ -5,9 +5,10 @@ test('record, pause, resume and stop produces screen + camera files with a manif
   browserName,
 }) => {
   await page.goto('./')
+  // The camera is on by default, so a camera-only take can start right away.
   await expect(
     page.getByRole('button', { name: 'Start recording' }),
-  ).toBeDisabled()
+  ).toBeEnabled()
 
   // The microphone should be on by default and show a live level.
   await expect(
