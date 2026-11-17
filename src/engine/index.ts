@@ -62,3 +62,4 @@ export {
 } from './session/recovery'
 export type { UnfinishedTake } from './session/recovery'
 export * from './transcribe'
+export * from './timeline/zoom'

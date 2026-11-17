@@ -4,11 +4,21 @@
   import { sessionLabel } from '../../engine'
   import Button from '../components/Button.svelte'
   import CornerPicker from '../components/CornerPicker.svelte'
+  import Splitter from '../components/Splitter.svelte'
   import SelectField from '../components/SelectField.svelte'
   import ShapePicker from '../components/ShapePicker.svelte'
   import SliderField from '../components/SliderField.svelte'
   import { formatTime } from '../record/format'
   import { ComposeStore } from './compose.svelte'
+  import {
+    DEFAULT_LAYOUT,
+    SIDEBAR_MIN,
+    TIMELINE_MIN,
+    clampLayout,
+    layoutLimits,
+    loadLayout,
+    saveLayout,
+  } from './layout-prefs'
   import CaptionsPanel from './CaptionsPanel.svelte'
   import Stage from './Stage.svelte'
   import Timeline from './Timeline.svelte'
@@ -24,6 +34,22 @@
   const store = new ComposeStore()
   onMount(() => void store.init(sessionId))
   onDestroy(() => store.destroy())
+
+  // Pane sizes: dragged with the splitters, remembered between visits.
+  let win = $state({ w: window.innerWidth, h: window.innerHeight })
+  let layout = $state(loadLayout(window.innerWidth, window.innerHeight))
+  const limits = $derived(layoutLimits(win.w, win.h))
+  function onresize(): void {
+    win = { w: window.innerWidth, h: window.innerHeight }
+    layout = clampLayout(layout, win.w, win.h)
+  }
+  let saveTimer: ReturnType<typeof setTimeout> | undefined
+  function setLayout(patch: Partial<typeof layout>): void {
+    layout = clampLayout({ ...layout, ...patch }, win.w, win.h)
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => saveLayout($state.snapshot(layout)), 200)
+  }
+  onDestroy(() => clearTimeout(saveTimer))
 
   let tab = $state<'words' | 'captions' | 'edit' | ''>('')
   // Words first when there is a transcript; otherwise the cut and bubble tools.
@@ -62,7 +88,7 @@
   }
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} {onresize} />
 
 {#if store.loading}
   <div class="state" role="status">Loading take…</div>
@@ -72,7 +98,7 @@
     <Button variant="primary" onclick={onrecord}>Go to Record</Button>
   </div>
 {:else}
-  <div class="layout">
+  <div class="layout" style="--sidebar:{layout.sidebar}px">
     <section class="stage" aria-label="Preview">
       <div class="canvas-wrap">
         {#key store.sessionId}
@@ -99,6 +125,16 @@
       {#if store.error}<p class="error" role="alert">{store.error}</p>{/if}
     </section>
 
+    <Splitter
+      orientation="vertical"
+      invert
+      label="Resize sidebar"
+      value={layout.sidebar}
+      min={SIDEBAR_MIN}
+      max={limits.sidebarMax}
+      onchange={(v) => setLayout({ sidebar: v })}
+      onreset={() => setLayout({ sidebar: DEFAULT_LAYOUT.sidebar })}
+    />
     <aside class="sidebar" aria-label="Edit">
       <Tabs.Root
         value={activeTab}
@@ -200,7 +236,17 @@
       </Tabs.Root>
     </aside>
   </div>
-  <Timeline {store} />
+  <Splitter
+    orientation="horizontal"
+    invert
+    label="Resize timeline"
+    value={layout.timeline}
+    min={TIMELINE_MIN}
+    max={limits.timelineMax}
+    onchange={(v) => setLayout({ timeline: v })}
+    onreset={() => setLayout({ timeline: DEFAULT_LAYOUT.timeline })}
+  />
+  <Timeline {store} height={layout.timeline} />
 {/if}
 
 <style>
@@ -215,7 +261,7 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: 1fr minmax(300px, 400px);
+    grid-template-columns: minmax(0, 1fr) auto var(--sidebar);
   }
   .stage {
     min-width: 0;
@@ -314,6 +360,9 @@
   @media (max-width: 800px) {
     .layout {
       grid-template-columns: 1fr;
+    }
+    .layout > :global(.splitter) {
+      display: none;
     }
     .sidebar {
       border-left: none;

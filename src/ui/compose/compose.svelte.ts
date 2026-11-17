@@ -48,6 +48,14 @@ import {
   type Cue,
   type Word,
   captionStarts,
+  centerView,
+  clampView,
+  fullView,
+  panView,
+  revealView,
+  zoomLevel,
+  zoomView,
+  type View,
   detectFillers,
   joinCaptionWithPrevious,
   longSilences,
@@ -97,6 +105,8 @@ export class ComposeStore {
 
   duration = $state(0)
   playhead = $state(0)
+  /** The part of the take the timeline shows (output ms). */
+  view = $state<View>({ start: 0, span: 1 })
   playing = $state(false)
   aspect = $state(16 / 9)
   /** Where preview frames come from: the video elements or WebCodecs. */
@@ -146,6 +156,7 @@ export class ComposeStore {
       this.selection = null
       this.syncHistoryFlags()
       this.recompute(false)
+      this.view = fullView(this.outputTotal)
       this.screenUrl = URL.createObjectURL(s.screen!)
       this.cameraUrl = s.camera ? URL.createObjectURL(s.camera) : ''
       this.playhead = 0
@@ -590,6 +601,33 @@ export class ComposeStore {
     this.markDirty()
     if (commit) this.record()
     this.scheduleSave()
+  }
+
+  // ---- timeline zoom -------------------------------------------------
+
+  get zoom(): number {
+    return zoomLevel(this.view, this.outputTotal)
+  }
+  setView(v: View): void {
+    this.view = clampView(v, this.outputTotal)
+  }
+  /** Zoom in (factor > 1) or out, keeping `anchorMs` (default: the playhead) in place. */
+  zoomBy(factor: number, anchorMs = this.playheadOutput): void {
+    this.view = zoomView(this.view, this.outputTotal, factor, anchorMs)
+  }
+  zoomFit(): void {
+    this.view = fullView(this.outputTotal)
+  }
+  panBy(deltaMs: number): void {
+    this.view = panView(this.view, this.outputTotal, deltaMs)
+  }
+  centerOn(ms: number): void {
+    this.view = centerView(this.view, this.outputTotal, ms)
+  }
+  /** Scroll the view so `ms` is visible (used while playing). */
+  reveal(ms: number): void {
+    const next = revealView(this.view, this.outputTotal, ms)
+    if (next !== this.view) this.view = next
   }
 
   // ---- transcript editing (one flow with the timeline) ---------------
