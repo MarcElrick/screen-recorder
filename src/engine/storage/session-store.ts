@@ -37,16 +37,40 @@ async function root(): Promise<FileSystemDirectoryHandle> {
   return navigator.storage.getDirectory()
 }
 
-/** Saved takes (directories holding a session.json), newest first. */
-export async function listSessions(): Promise<
-  { id: string; createdAt: string; durationMs: number }[]
-> {
-  const out: { id: string; createdAt: string; durationMs: number }[] = []
-  for (const { manifest: m } of memory.values()) {
-    out.push({ id: m.id, createdAt: m.createdAt, durationMs: m.durationMs })
+export interface SessionSummary {
+  id: string
+  name?: string
+  createdAt: string
+  durationMs: number
+  sizeBytes: number
+  hasCamera: boolean
+  hasAudio: boolean
+}
+
+function summarise(m: SessionManifest, fallbackId: string): SessionSummary {
+  return {
+    id: m.id ?? fallbackId,
+    name: m.name,
+    createdAt: m.createdAt,
+    durationMs: m.durationMs,
+    sizeBytes: m.tracks.reduce((n, t) => n + (t.sizeBytes ?? 0), 0),
+    hasCamera: m.tracks.some((t) => t.kind === 'camera'),
+    hasAudio: m.tracks.some((t) => t.hasAudio),
   }
-  if (!opfsSupported())
-    return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
+/** What to call a take in lists: its name, else its date. */
+export function sessionLabel(s: { name?: string; createdAt: string }): string {
+  return s.name?.trim() || new Date(s.createdAt).toLocaleString()
+}
+
+/** Saved takes (directories holding a session.json), newest first. */
+export async function listSessions(): Promise<SessionSummary[]> {
+  const out: SessionSummary[] = []
+  for (const { manifest: m } of memory.values()) out.push(summarise(m, m.id))
+  const newestFirst = (): SessionSummary[] =>
+    out.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  if (!opfsSupported()) return newestFirst()
   const r = (await root()) as unknown as {
     entries(): AsyncIterable<[string, FileSystemHandle]>
   }
@@ -57,16 +81,60 @@ export async function listSessions(): Promise<
         'session.json',
       )
       const m = JSON.parse(await (await f.getFile()).text()) as SessionManifest
-      out.push({
-        id: m.id ?? name,
-        createdAt: m.createdAt,
-        durationMs: m.durationMs,
-      })
+      if (!memory.has(m.id ?? name)) out.push(summarise(m, name))
     } catch {
       /* not a session */
     }
   }
-  return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  return newestFirst()
+}
+
+/** Give a take a name (empty clears it). */
+export async function renameSession(id: string, name: string): Promise<void> {
+  const clean = name.trim()
+  const apply = (m: SessionManifest): SessionManifest => {
+    const next = { ...m }
+    if (clean) next.name = clean
+    else delete next.name
+    return next
+  }
+  const mem = memory.get(id)
+  if (mem) mem.manifest = apply(mem.manifest)
+  if (!opfsSupported()) return
+  try {
+    const dir = await (await root()).getDirectoryHandle(id)
+    const m = JSON.parse(
+      await (await (await dir.getFileHandle('session.json')).getFile()).text(),
+    ) as SessionManifest
+    await writeJson(id, 'session.json', apply(m))
+  } catch (err) {
+    if (!mem) throw err
+  }
+}
+
+/** Delete a take and its files. */
+export async function deleteSession(id: string): Promise<void> {
+  memory.delete(id)
+  if (!opfsSupported()) return
+  try {
+    await (await root()).removeEntry(id, { recursive: true })
+  } catch (err) {
+    if ((err as DOMException)?.name !== 'NotFoundError') throw err
+  }
+}
+
+/** Browser storage used and available, if the browser can tell us. */
+export async function storageUsage(): Promise<{
+  usage: number
+  quota: number
+} | null> {
+  try {
+    const e = await navigator.storage.estimate()
+    if (e.usage === undefined || e.quota === undefined) return null
+    return { usage: e.usage, quota: e.quota }
+  } catch {
+    return null
+  }
 }
 
 export class SessionLoadError extends Error {}

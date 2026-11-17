@@ -37,13 +37,17 @@ export { fixInfiniteDuration } from './playback/duration-fix'
 export { decodePeaks } from './playback/waveform'
 export {
   listSessions,
+  renameSession,
+  deleteSession,
+  storageUsage,
+  sessionLabel,
   loadSession,
   saveManifest,
   readCachedJson,
   writeCachedJson,
   SessionLoadError,
 } from './storage/session-store'
-export type { LoadedSession } from './storage/session-store'
+export type { LoadedSession, SessionSummary } from './storage/session-store'
 export { exportVideo, exportSupported, ExportError } from './export/exporter'
 export type {
   ExportFormat,

@@ -9,6 +9,8 @@
     exportVideo,
     formatBytes,
     listSessions,
+    sessionLabel,
+    type SessionSummary,
     loadSession,
     readCompose,
     type ExportFormat,
@@ -23,12 +25,13 @@
   import SwitchField from '../components/SwitchField.svelte'
   import { formatTime } from '../record/format'
 
-  let { onrecord }: { onrecord: () => void } = $props()
+  let {
+    onrecord,
+    takeId: preferred,
+  }: { onrecord: () => void; takeId?: string } = $props()
 
   const supported = exportSupported()
-  let sessions = $state<
-    { id: string; createdAt: string; durationMs: number }[]
-  >([])
+  let sessions = $state<SessionSummary[]>([])
   let takeId = $state('')
   let hasAudio = $state(true)
   let settings = $state<ExportSettings>(structuredClone(PRESETS[0].settings))
@@ -58,7 +61,7 @@
   const takeOptions = $derived(
     sessions.map((s) => ({
       id: s.id,
-      label: `${new Date(s.createdAt).toLocaleString()} (${formatTime(s.durationMs)})`,
+      label: `${sessionLabel(s)} (${formatTime(s.durationMs)})`,
     })),
   )
   const take = $derived(sessions.find((s) => s.id === takeId))
@@ -84,7 +87,8 @@
   onMount(async () => {
     try {
       sessions = await listSessions()
-      takeId = sessions[0]?.id ?? ''
+      takeId =
+        sessions.find((s) => s.id === preferred)?.id ?? sessions[0]?.id ?? ''
       await loadTakeInfo()
     } finally {
       loaded = true

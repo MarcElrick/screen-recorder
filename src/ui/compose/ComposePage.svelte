@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
+  import { sessionLabel } from '../../engine'
   import Button from '../components/Button.svelte'
   import CornerPicker from '../components/CornerPicker.svelte'
   import SelectField from '../components/SelectField.svelte'
@@ -20,7 +21,7 @@
   const options = $derived(
     store.sessions.map((s) => ({
       id: s.id,
-      label: `${new Date(s.createdAt).toLocaleString()} (${formatTime(s.durationMs)})`,
+      label: `${sessionLabel(s)} (${formatTime(s.durationMs)})`,
     })),
   )
 

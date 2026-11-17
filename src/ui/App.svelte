@@ -2,9 +2,12 @@
   import ComposePage from './compose/ComposePage.svelte'
   import ExportPage from './export/ExportPage.svelte'
   import RecordPage from './record/RecordPage.svelte'
+  import TakesPage from './takes/TakesPage.svelte'
 
-  type Page = 'record' | 'compose' | 'export'
+  type Page = 'record' | 'compose' | 'export' | 'takes'
   let page = $state<Page>('record')
+  /** The take chosen from the Takes list (otherwise the newest is used). */
+  let takeId = $state<string | undefined>()
 
   const steps: { id: Page; label: string; enabled: boolean }[] = [
     { id: 'record', label: 'Record', enabled: true },
@@ -25,7 +28,10 @@
               class="step"
               aria-current={s.id === page ? 'step' : undefined}
               disabled={!s.enabled}
-              onclick={() => (page = s.id)}
+              onclick={() => {
+                takeId = undefined
+                page = s.id
+              }}
             >
               <span class="num">{i + 1}</span>{s.label}
             </button>
@@ -33,6 +39,14 @@
         {/each}
       </ol>
     </nav>
+    <button
+      type="button"
+      class="takes"
+      aria-current={page === 'takes' ? 'page' : undefined}
+      onclick={() => (page = 'takes')}
+    >
+      Takes
+    </button>
   </header>
   <!-- Record stays mounted (hidden) so live streams survive a trip to Compose. -->
   <main hidden={page !== 'record'}>
@@ -40,12 +54,23 @@
   </main>
   {#if page === 'compose'}
     <main>
-      <ComposePage onrecord={() => (page = 'record')} />
+      <ComposePage sessionId={takeId} onrecord={() => (page = 'record')} />
+    </main>
+  {/if}
+  {#if page === 'takes'}
+    <main>
+      <TakesPage
+        onrecord={() => (page = 'record')}
+        onopen={(id, to) => {
+          takeId = id
+          page = to
+        }}
+      />
     </main>
   {/if}
   {#if page === 'export'}
     <main>
-      <ExportPage onrecord={() => (page = 'record')} />
+      <ExportPage {takeId} onrecord={() => (page = 'record')} />
     </main>
   {/if}
 </div>
@@ -63,6 +88,21 @@
     padding: var(--space-3) var(--space-4);
     border-bottom: 1px solid var(--border);
     background: var(--surface-1);
+  }
+  .takes {
+    margin-left: auto;
+    font: inherit;
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--ink-1);
+    cursor: pointer;
+  }
+  .takes[aria-current='page'] {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-color: transparent;
   }
   .brand {
     font-weight: 700;

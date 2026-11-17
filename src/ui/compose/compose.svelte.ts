@@ -35,6 +35,7 @@ import {
   type BubbleShape,
   type Corner,
   type LoadedSession,
+  type SessionSummary,
   type Placement,
   type ComposeState,
 } from '../../engine'
@@ -56,7 +57,7 @@ interface Snapshot {
 }
 
 export class ComposeStore {
-  sessions = $state<{ id: string; createdAt: string; durationMs: number }[]>([])
+  sessions = $state<SessionSummary[]>([])
   sessionId = $state('')
   loading = $state(true)
   error = $state('')

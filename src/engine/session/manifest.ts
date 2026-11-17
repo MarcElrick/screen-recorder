@@ -17,6 +17,8 @@ export interface ManifestTrack {
 export interface SessionManifest {
   version: 1
   id: string
+  /** Optional name given in the Takes list. */
+  name?: string
   createdAt: string
   durationMs: number
   /** Raw-clock intervals where recording was paused. */
