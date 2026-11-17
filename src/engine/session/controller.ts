@@ -8,7 +8,8 @@ import {
 } from '../recording/track-recorder'
 import {
   defaultSinkFactory,
-  opfsSupported,
+  canStreamToOpfs,
+  persistFile,
   writeJson,
   type SinkFactory,
 } from '../storage/sink'
@@ -236,13 +237,23 @@ export class SessionController {
         placement: bubblePlacement(this.bubble),
       },
     })
+    let persisted = false
     try {
+      if (!canStreamToOpfs()) {
+        // Recorded in memory (e.g. Firefox): write the finished files now.
+        await Promise.all(
+          tracks.map((t) => persistFile(this.sessionId, t.file, t.blob)),
+        )
+      }
       await writeJson(this.sessionId, 'session.json', manifest)
-    } catch {
-      /* manifest stays in memory */
+      persisted = true
+    } catch (err) {
+      this.dispatch({
+        type: 'notice',
+        message: `Couldn't save to browser storage (${err instanceof Error ? err.message : err}). The take is kept in memory until you reload.`,
+      })
     }
-    if (!opfsSupported()) rememberSession(manifest, tracks)
-    if (!opfsSupported()) rememberSession(manifest, tracks)
+    if (!persisted) rememberSession(manifest, tracks)
     this.output = { manifest, tracks }
     this.dispatch({ type: 'stopped' })
     return this.output

@@ -116,7 +116,10 @@ export async function loadSession(id: string): Promise<LoadedSession> {
 export function saveManifest(id: string, manifest: unknown): Promise<void> {
   const mem = memory.get(id)
   if (mem) mem.manifest = manifest as SessionManifest
-  return writeJson(id, 'session.json', manifest)
+  if (!opfsSupported()) return Promise.resolve()
+  return writeJson(id, 'session.json', manifest).catch((err) => {
+    if (!mem) throw err
+  })
 }
 
 export async function readCachedJson<T>(
@@ -145,5 +148,6 @@ export function writeCachedJson(
     mem.json.set(name, data)
     return Promise.resolve()
   }
+  if (!opfsSupported()) return Promise.resolve()
   return writeJson(id, name, data)
 }

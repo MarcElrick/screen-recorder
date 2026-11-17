@@ -47,15 +47,66 @@ function isFirefox(): boolean {
   )
 }
 
+/** OPFS can be read and written in some way (read access is enough for Compose). */
 export function opfsSupported(): boolean {
-  // Firefox's OPFS writable streams are not reliable enough to depend on yet:
-  // keep chunks in memory there instead of risking a take that never saves.
-  if (isFirefox()) return false
+  return typeof navigator !== 'undefined' && !!navigator.storage?.getDirectory
+}
+
+/**
+ * Whether chunks can be streamed to OPFS while recording. Firefox's writable
+ * streams aren't reliable, so there takes are held in memory and written once
+ * on stop (see `persistFile`).
+ */
+export function canStreamToOpfs(): boolean {
   return (
-    typeof navigator !== 'undefined' &&
-    !!navigator.storage?.getDirectory &&
+    opfsSupported() &&
+    !isFirefox() &&
     typeof FileSystemFileHandle !== 'undefined' &&
     'createWritable' in FileSystemFileHandle.prototype
+  )
+}
+
+function writeViaWorker(dir: string, name: string, data: Blob): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof Worker === 'undefined')
+      return reject(new Error('Workers unavailable'))
+    const w = new Worker(new URL('./opfs-writer.worker.ts', import.meta.url), {
+      type: 'module',
+    })
+    w.onmessage = (e: MessageEvent<{ ok: boolean; error?: string }>) => {
+      w.terminate()
+      if (e.data.ok) resolve()
+      else reject(new Error(e.data.error ?? 'Write failed'))
+    }
+    w.onerror = (e) => {
+      w.terminate()
+      reject(new Error(e.message || 'Write failed'))
+    }
+    w.postMessage({ dir, name, data })
+  })
+}
+
+/** Write a whole file to OPFS (createWritable where reliable, else a worker). */
+export async function persistFile(
+  dir: string,
+  name: string,
+  data: Blob,
+): Promise<void> {
+  if (!opfsSupported()) throw new Error('Browser storage is not available')
+  if (canStreamToOpfs()) {
+    const root = await navigator.storage.getDirectory()
+    const d = await root.getDirectoryHandle(dir, { create: true })
+    const w = await (
+      await d.getFileHandle(name, { create: true })
+    ).createWritable()
+    await w.write(data)
+    await w.close()
+    return
+  }
+  await withTimeout(
+    writeViaWorker(dir, name, data),
+    60_000,
+    'Writing to storage',
   )
 }
 
@@ -118,7 +169,7 @@ export type SinkFactory = (
 
 /** OPFS when available, otherwise memory (with `fellBack` reported by caller). */
 export const defaultSinkFactory: SinkFactory = async (dir, name, onDegrade) => {
-  if (opfsSupported()) {
+  if (canStreamToOpfs()) {
     try {
       return new ResilientSink(
         await withTimeout(OpfsSink.create(dir, name), 5000, 'Opening storage'),
@@ -136,12 +187,9 @@ export async function writeJson(
   name: string,
   data: unknown,
 ): Promise<void> {
-  if (!opfsSupported()) return
-  const root = await navigator.storage.getDirectory()
-  const d = await root.getDirectoryHandle(dir, { create: true })
-  const w = await (
-    await d.getFileHandle(name, { create: true })
-  ).createWritable()
-  await w.write(JSON.stringify(data, null, 2))
-  await w.close()
+  await persistFile(
+    dir,
+    name,
+    new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
+  )
 }
