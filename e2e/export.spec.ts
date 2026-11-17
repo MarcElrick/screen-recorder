@@ -35,7 +35,7 @@ for (const format of ['WebM', 'MP4']) {
     await expect(page.getByText(/Take saved/)).toBeVisible()
 
     await page.getByRole('button', { name: /Export/ }).click()
-    await page.getByRole('radio', { name: format }).click()
+    await page.getByRole('radio', { name: format, exact: true }).click()
     await page
       .getByRole('region', { name: 'Export settings' })
       .getByRole('button', { name: 'Export' })
@@ -60,3 +60,44 @@ for (const format of ['WebM', 'MP4']) {
     expect(info!.streams).toContain('audio')
   })
 }
+
+test('presets, estimate, mute and frame rate', async ({ page }) => {
+  await page.goto('./')
+  await page.getByRole('button', { name: 'Choose screen' }).click()
+  await page.getByRole('switch', { name: '3s countdown' }).click()
+  await page.getByRole('button', { name: 'Start recording' }).click()
+  await expect(page.getByText('Recording', { exact: true })).toBeVisible()
+  await page.waitForTimeout(2500)
+  await page.getByRole('button', { name: 'Stop' }).click()
+  await expect(page.getByText(/Take saved/)).toBeVisible()
+  await page.getByRole('button', { name: /Export/ }).click()
+
+  const settings = page.getByRole('region', { name: 'Export settings' })
+  await expect(settings.getByText(/Estimated size/)).toBeVisible()
+  const estimate = async (): Promise<string> =>
+    (await settings.getByText(/Estimated size/).innerText()).replace(/\D+/, ' ')
+  const before = await estimate()
+
+  // A preset changes the settings (and the estimate); editing one makes it custom.
+  await settings.getByRole('radio', { name: /Small file/ }).click()
+  await expect(
+    settings.getByRole('radio', { name: 'WebM', exact: true }),
+  ).toHaveAttribute('data-state', 'off')
+  expect(await estimate()).not.toBe(before)
+  await settings.getByRole('radio', { name: 'High', exact: true }).click()
+  await expect(settings.getByText('Custom settings')).toBeVisible()
+
+  await settings.getByRole('switch', { name: 'Mute' }).click()
+  await settings.getByRole('radio', { name: 'WebM', exact: true }).click()
+  await settings.getByRole('button', { name: 'Export' }).click()
+  const link = page.getByRole('link', { name: /Download recording/ })
+  await expect(link).toBeVisible({ timeout: 60_000 })
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    link.click(),
+  ])
+  const info = ffprobe(await download.path())
+  test.skip(info === null, 'ffprobe not installed')
+  expect(info!.streams).toContain('video')
+  expect(info!.streams).not.toContain('audio')
+})

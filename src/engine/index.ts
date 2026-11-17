@@ -50,3 +50,4 @@ export type {
   ExportOptions,
   ExportResult,
 } from './export/exporter'
+export * from './export/plan'

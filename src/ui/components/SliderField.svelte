@@ -7,18 +7,28 @@
     min = 0.1,
     max = 0.5,
     step = 0.01,
+    onchange,
   }: {
     label: string
     value?: number
     min?: number
     max?: number
     step?: number
+    onchange?: (v: number) => void
   } = $props()
 </script>
 
 <div class="field">
   <span class="label">{label}</span>
-  <Slider.Root type="single" bind:value {min} {max} {step} class="slider">
+  <Slider.Root
+    type="single"
+    bind:value
+    {min}
+    {max}
+    {step}
+    class="slider"
+    onValueChange={(v) => onchange?.(v)}
+  >
     <span class="track"><Slider.Range class="range" /></span>
     <Slider.Thumb index={0} class="knob" aria-label={label} />
   </Slider.Root>

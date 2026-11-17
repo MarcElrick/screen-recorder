@@ -5,12 +5,24 @@
     label,
     checked = $bindable(false),
     disabled = false,
-  }: { label: string; checked?: boolean; disabled?: boolean } = $props()
+    onchange,
+  }: {
+    label: string
+    checked?: boolean
+    disabled?: boolean
+    onchange?: (v: boolean) => void
+  } = $props()
 </script>
 
 <label class="row">
   <span>{label}</span>
-  <Switch.Root class="switch" bind:checked {disabled} aria-label={label}>
+  <Switch.Root
+    class="switch"
+    bind:checked
+    {disabled}
+    aria-label={label}
+    onCheckedChange={(v) => onchange?.(v)}
+  >
     <Switch.Thumb class="thumb" />
   </Switch.Root>
 </label>

@@ -4,7 +4,6 @@ import {
   CanvasSource,
   Mp4OutputFormat,
   Output,
-  QUALITY_HIGH,
   WebMOutputFormat,
   getFirstEncodableAudioCodec,
   getFirstEncodableVideoCodec,
@@ -17,6 +16,13 @@ import {
   type Layout,
 } from '../compositing/render'
 import { DecodedVideo } from '../playback/decoded-video'
+import {
+  audioBitrate,
+  normaliseGain,
+  videoBitrate,
+  type AudioSettings,
+  type Quality,
+} from './plan'
 import type { SessionManifest } from '../session/manifest'
 import {
   editedDuration,
@@ -28,6 +34,9 @@ import { trackExtent } from '../timeline/time'
 export type ExportFormat = 'mp4' | 'webm'
 
 export interface ExportOptions {
+  /** Encoding quality; also sets the bitrates. Defaults to balanced. */
+  quality?: Quality
+  audio?: AudioSettings
   manifest: SessionManifest
   edit: EditList
   screen: Blob
@@ -71,6 +80,8 @@ export async function exportVideo(o: ExportOptions): Promise<ExportResult> {
       'This browser cannot encode video. Try a recent Chrome, Edge or Safari.',
     )
   const fps = o.fps ?? 30
+  const quality = o.quality ?? 'balanced'
+  const audioSettings = o.audio ?? { mute: false, normalise: false, gain: 1 }
   const aborted = (): boolean => o.signal?.aborted === true
   const check = (): void => {
     if (aborted()) throw new ExportError('Export cancelled.')
@@ -114,7 +125,7 @@ export async function exportVideo(o: ExportOptions): Promise<ExportResult> {
     if (!ctx) throw new ExportError("Couldn't create a drawing surface.")
     const videoSource = new CanvasSource(canvas, {
       codec: videoCodec,
-      bitrate: QUALITY_HIGH,
+      bitrate: videoBitrate(width, height, fps, quality),
     })
     output.addVideoTrack(videoSource, { frameRate: fps })
 
@@ -122,10 +133,13 @@ export async function exportVideo(o: ExportOptions): Promise<ExportResult> {
     let audioCodec: AudioCodec | null = null
     let audioBuffer: AudioBuffer | null = null
     let audioSource: AudioBufferSource | null = null
-    if (o.camera && ct?.hasAudio && cExt) {
-      audioBuffer = await buildEditedAudio(o.camera, o.edit, cExt.start).catch(
-        () => null,
-      )
+    if (o.camera && ct?.hasAudio && cExt && !audioSettings.mute) {
+      audioBuffer = await buildEditedAudio(
+        o.camera,
+        o.edit,
+        cExt.start,
+        audioSettings,
+      ).catch(() => null)
       if (audioBuffer) {
         audioCodec = await getFirstEncodableAudioCodec(
           o.format === 'mp4' ? ['aac', 'opus'] : ['opus', 'vorbis'],
@@ -137,7 +151,7 @@ export async function exportVideo(o: ExportOptions): Promise<ExportResult> {
         if (audioCodec) {
           audioSource = new AudioBufferSource({
             codec: audioCodec,
-            bitrate: QUALITY_HIGH,
+            bitrate: audioBitrate(quality),
           })
           output.addAudioTrack(audioSource)
         }
@@ -201,6 +215,7 @@ async function buildEditedAudio(
   file: Blob,
   edit: EditList,
   cameraStartMs: number,
+  settings: AudioSettings,
 ): Promise<AudioBuffer | null> {
   const ctx = new AudioContext()
   try {
@@ -224,6 +239,20 @@ async function buildEditedAudio(
         if (s1 > s0) dst.set(data.subarray(s0, s1), cursor + (s0 - from))
       }
       cursor += len
+    }
+    // Gain: optional peak normalisation, then the user's volume.
+    let peak = 0
+    for (let c = 0; c < out.numberOfChannels; c++) {
+      const d = out.getChannelData(c)
+      for (let i = 0; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]))
+    }
+    const gain = (settings.normalise ? normaliseGain(peak) : 1) * settings.gain
+    if (gain !== 1) {
+      for (let c = 0; c < out.numberOfChannels; c++) {
+        const d = out.getChannelData(c)
+        for (let i = 0; i < d.length; i++)
+          d[i] = Math.max(-1, Math.min(1, d[i] * gain))
+      }
     }
     return out
   } finally {
