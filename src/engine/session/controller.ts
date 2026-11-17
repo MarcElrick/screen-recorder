@@ -1,4 +1,5 @@
 import { SessionClock } from '../recording/clock'
+import { withTimeout } from '../recording/timeout'
 import { pickMime } from '../recording/mime'
 import {
   TrackRecorder,
@@ -146,7 +147,12 @@ export class SessionController {
           file,
           stream,
           mime: this.mime,
-          sink: await sinkFactory(this.sessionId, file),
+          sink: await sinkFactory(this.sessionId, file, () =>
+            this.dispatch({
+              type: 'notice',
+              message: `Couldn't write the ${kind} file to browser storage; keeping it in memory instead.`,
+            }),
+          ),
           clock: this.clock,
           onEnded: (k) => this.onTrackEnded(k),
           onError: (k, err) =>
@@ -197,7 +203,23 @@ export class SessionController {
     this.dispatch({ type: 'stop' })
     const durationMs = this.clock.elapsed()
     const pauses = this.clock.finish()
-    const tracks = await Promise.all(this.recorders.map((r) => r.stop()))
+    let tracks: TrackResult[]
+    try {
+      tracks = await withTimeout(
+        Promise.all(this.recorders.map((r) => r.stop())),
+        30_000,
+        'Saving the recording',
+      )
+    } catch (err) {
+      this.recorders = []
+      this.screen = null
+      this.camera = null
+      this.dispatch({
+        type: 'fail',
+        message: `Couldn't save the recording: ${err instanceof Error ? err.message : String(err)}`,
+      })
+      return null
+    }
     this.recorders = []
     this.screen = null
     this.camera = null

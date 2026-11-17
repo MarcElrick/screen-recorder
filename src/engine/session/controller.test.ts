@@ -157,3 +157,22 @@ describe('SessionController', () => {
     expect(recorders).toHaveLength(0)
   })
 })
+
+describe('stopping never hangs', () => {
+  it('fails with a message instead of staying in "stopping" when saving throws', async () => {
+    const c = new SessionController({
+      sinkFactory: async () => ({
+        write: async () => {},
+        close: async () => {
+          throw new Error('disk exploded')
+        },
+      }),
+      id: () => 'take-x',
+    })
+    c.setScreen(new FakeStream() as unknown as MediaStream)
+    await c.start()
+    expect(await c.stop()).toBeNull()
+    expect(c.state.phase).toBe('error')
+    expect(c.state.error).toMatch(/disk exploded/)
+  })
+})

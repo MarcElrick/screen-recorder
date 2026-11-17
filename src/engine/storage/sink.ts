@@ -1,3 +1,5 @@
+import { withTimeout } from '../recording/timeout'
+
 /** Where recorded chunks go. OPFS in production, memory as a fallback/in tests. */
 export interface ChunkSink {
   write(chunk: Blob): Promise<void>
@@ -39,7 +41,16 @@ export class OpfsSink implements ChunkSink {
   }
 }
 
+function isFirefox(): boolean {
+  return (
+    typeof navigator !== 'undefined' && /firefox\//i.test(navigator.userAgent)
+  )
+}
+
 export function opfsSupported(): boolean {
+  // Firefox's OPFS writable streams are not reliable enough to depend on yet:
+  // keep chunks in memory there instead of risking a take that never saves.
+  if (isFirefox()) return false
   return (
     typeof navigator !== 'undefined' &&
     !!navigator.storage?.getDirectory &&
@@ -48,13 +59,71 @@ export function opfsSupported(): boolean {
   )
 }
 
-export type SinkFactory = (dir: string, name: string) => Promise<ChunkSink>
+/**
+ * Writes to `primary`; if it ever fails or stalls, carries on in memory so the
+ * take is still saved (without crash-safety) and reports it via `onDegrade`.
+ */
+export class ResilientSink implements ChunkSink {
+  private memory = new MemorySink()
+  private degraded = false
+  private primaryWrites = 0
+
+  constructor(
+    private readonly primary: ChunkSink,
+    private readonly onDegrade?: (err: unknown) => void,
+    private readonly timeoutMs = 10_000,
+  ) {}
+
+  async write(chunk: Blob): Promise<void> {
+    if (!this.degraded) {
+      try {
+        await withTimeout(
+          this.primary.write(chunk),
+          this.timeoutMs,
+          'Writing to storage',
+        )
+        this.primaryWrites++
+        return
+      } catch (err) {
+        this.degraded = true
+        this.onDegrade?.(err)
+      }
+    }
+    await this.memory.write(chunk)
+  }
+
+  async close(): Promise<Blob> {
+    if (this.degraded && this.primaryWrites === 0) return this.memory.close()
+    try {
+      const blob = await withTimeout(
+        this.primary.close(),
+        this.timeoutMs,
+        'Finishing the file',
+      )
+      if (!this.degraded) return blob
+      // Part of the take is in storage and the rest in memory: join them.
+      return new Blob([blob, await this.memory.close()], { type: blob.type })
+    } catch (err) {
+      this.onDegrade?.(err)
+      return this.memory.close()
+    }
+  }
+}
+
+export type SinkFactory = (
+  dir: string,
+  name: string,
+  onDegrade?: (err: unknown) => void,
+) => Promise<ChunkSink>
 
 /** OPFS when available, otherwise memory (with `fellBack` reported by caller). */
-export const defaultSinkFactory: SinkFactory = async (dir, name) => {
+export const defaultSinkFactory: SinkFactory = async (dir, name, onDegrade) => {
   if (opfsSupported()) {
     try {
-      return await OpfsSink.create(dir, name)
+      return new ResilientSink(
+        await withTimeout(OpfsSink.create(dir, name), 5000, 'Opening storage'),
+        onDegrade,
+      )
     } catch {
       /* fall through to memory */
     }

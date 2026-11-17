@@ -1,6 +1,8 @@
 import type { SessionClock } from './clock'
 import type { ChunkSink } from '../storage/sink'
 
+const STOP_TIMEOUT_MS = 5000
+
 export type TrackKind = 'screen' | 'camera'
 
 export interface TrackResult {
@@ -88,9 +90,20 @@ export class TrackRecorder {
     for (const t of this.o.stream.getTracks())
       t.removeEventListener('ended', this.handleEnded)
     if (this.recorder.state !== 'inactive') {
+      // Some browsers never fire 'stop' (e.g. if the source already ended), so
+      // don't wait forever; whatever chunks arrived are still saved.
       await new Promise<void>((resolve) => {
-        this.recorder.onstop = () => resolve()
-        this.recorder.stop()
+        const timer = setTimeout(resolve, STOP_TIMEOUT_MS)
+        this.recorder.onstop = () => {
+          clearTimeout(timer)
+          resolve()
+        }
+        try {
+          this.recorder.stop()
+        } catch {
+          clearTimeout(timer)
+          resolve()
+        }
       })
     }
     this.endOffsetMs = this.o.clock.offset()

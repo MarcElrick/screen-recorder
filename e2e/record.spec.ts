@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 
 test('record, pause, resume and stop produces screen + camera files with a manifest', async ({
   page,
+  browserName,
 }) => {
   await page.goto('./')
   await expect(
@@ -39,6 +40,14 @@ test('record, pause, resume and stop produces screen + camera files with a manif
   await page.waitForTimeout(1500)
   await page.getByRole('button', { name: 'Stop' }).click()
   await expect(page.getByText(/Take saved/)).toBeVisible()
+
+  // Firefox keeps takes in memory (no OPFS), so the saved state is all we can check.
+  if (browserName === 'firefox') {
+    await expect(
+      page.getByRole('button', { name: 'Download camera.webm' }),
+    ).toBeVisible()
+    return
+  }
 
   const manifest = await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory()
