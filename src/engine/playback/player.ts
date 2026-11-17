@@ -21,6 +21,7 @@ export class SessionPlayer {
   private _playing = false
   private _playhead = 0
   private listeners = new Set<Listener>()
+  private lastSeek = new WeakMap<HTMLVideoElement, number>()
   layout: Layout
   readonly duration: number
   private readonly screenExtent: { start: number; end: number }
@@ -123,8 +124,13 @@ export class SessionPlayer {
       extent,
       currentTime: video.currentTime,
       playing: this._playing,
+      seeking: video.seeking,
+      sinceSeekMs: performance.now() - (this.lastSeek.get(video) ?? -Infinity),
     })
-    if (plan.seekTo !== null) video.currentTime = plan.seekTo
+    if (plan.seekTo !== null) {
+      video.currentTime = plan.seekTo
+      this.lastSeek.set(video, performance.now())
+    }
     if (plan.shouldPlay && video.paused) void video.play().catch(() => {})
     if (!plan.shouldPlay && !video.paused) video.pause()
     return plan.active

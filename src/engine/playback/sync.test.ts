@@ -32,8 +32,17 @@ describe('planSync', () => {
     const near = { outputMs: 2000, extent, currentTime: 1.05 }
     expect(planSync({ ...near, playing: true }).seekTo).toBeNull()
     expect(planSync({ ...near, playing: false }).seekTo).toBe(1)
-    expect(planSync({ ...near, currentTime: 1.2, playing: true }).seekTo).toBe(
+    expect(planSync({ ...near, currentTime: 1.5, playing: true }).seekTo).toBe(
       1,
     )
+  })
+
+  it('does not re-seek mid-seek or right after a seek while playing', () => {
+    const far = { outputMs: 2000, extent, currentTime: 1.8, playing: true }
+    expect(planSync({ ...far, seeking: true }).seekTo).toBeNull()
+    expect(planSync({ ...far, sinceSeekMs: 100 }).seekTo).toBeNull()
+    expect(planSync({ ...far, sinceSeekMs: 1000 }).seekTo).toBe(1)
+    // scrubbing while paused is never delayed
+    expect(planSync({ ...far, playing: false, sinceSeekMs: 0 }).seekTo).toBe(1)
   })
 })
