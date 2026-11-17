@@ -43,7 +43,7 @@ import {
 const SAVE_DELAY_MS = 400
 
 export interface TrackRow {
-  id: 'screen' | 'camera' | 'audio'
+  id: 'take' | 'audio'
   label: string
   start: number
   end: number
@@ -162,30 +162,18 @@ export class ComposeStore {
     }
   }
 
+  /**
+   * One timeline row for the whole take. The screen and camera are never
+   * moved against each other, so only the audio waveform (when there is
+   * audio) is drawn on it.
+   */
   get rows(): TrackRow[] {
     const m = this.session?.manifest
     if (!m) return []
-    const rows: TrackRow[] = []
-    for (const t of m.tracks) {
-      const e = trackExtent(m.pauses, t)
-      if (t.kind === 'screen') {
-        rows.push({
-          id: 'screen',
-          label: m.mainSource === 'camera' ? 'Camera' : 'Screen',
-          ...e,
-        })
-      } else {
-        if (this.hasCameraVideo)
-          rows.push({
-            id: 'camera',
-            label: 'Camera',
-            ...e,
-            note: t.endedEarly ? 'Ended early' : undefined,
-          })
-        if (t.hasAudio) rows.push({ id: 'audio', label: 'Audio', ...e })
-      }
-    }
-    return rows
+    const audio = m.tracks.find((t) => t.kind === 'camera' && t.hasAudio)
+    if (audio)
+      return [{ id: 'audio', label: 'Audio', ...trackExtent(m.pauses, audio) }]
+    return [{ id: 'take', label: 'Recording', start: 0, end: this.outputTotal }]
   }
 
   get markers(): number[] {

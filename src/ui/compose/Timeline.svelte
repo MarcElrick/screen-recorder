@@ -206,10 +206,6 @@
     border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
     overflow: hidden;
   }
-  .clip.camera {
-    background: color-mix(in srgb, var(--ok) 28%, var(--surface-2));
-    border-color: color-mix(in srgb, var(--ok) 60%, transparent);
-  }
   .clip.audio {
     background: var(--surface-2);
     border-color: var(--border);
