@@ -10,7 +10,6 @@ import {
   normalizeEditList,
   type EditList,
 } from '../timeline/editlist'
-import { totalOutputMs } from '../timeline/time'
 import type { SessionManifest } from './manifest'
 
 export interface ComposeBubble {
@@ -43,9 +42,12 @@ function validPlacement(p: unknown): p is Placement {
   )
 }
 
-/** Output duration of a take (pauses removed). */
+/**
+ * Output duration of a take. `manifest.durationMs` is already the recorded
+ * time with pauses left out, so it must not have the pauses subtracted again.
+ */
 export function outputDuration(m: SessionManifest): number {
-  return Math.round(totalOutputMs(m.durationMs, m.pauses))
+  return Math.round(m.durationMs)
 }
 
 /**

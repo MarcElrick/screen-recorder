@@ -94,7 +94,15 @@ export class TrackRecorder {
   }
 
   pause(): void {
-    if (this.recorder.state === 'recording') this.recorder.pause()
+    if (this.recorder.state === 'recording') {
+      // Flush what is buffered so the moments before the pause are kept whole.
+      try {
+        this.recorder.requestData()
+      } catch {
+        // not supported: the next slice carries it
+      }
+      this.recorder.pause()
+    }
   }
 
   resume(): void {

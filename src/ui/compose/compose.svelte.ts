@@ -456,6 +456,13 @@ export class ComposeStore {
     const start = this.markStart ?? this.selection?.start ?? 0
     this.selection = { start: Math.min(start, at), end: Math.max(start, at) }
   }
+  /** Select the range between two points (dragging on the timeline). */
+  selectRange(a: number, b: number): void {
+    const start = Math.max(0, Math.min(a, b))
+    const end = Math.min(this.outputTotal, Math.max(a, b))
+    this.markStart = start
+    this.selection = { start, end }
+  }
   clearSelection(): void {
     this.selection = null
     this.markStart = null

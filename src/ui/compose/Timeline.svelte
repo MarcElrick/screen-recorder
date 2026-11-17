@@ -21,20 +21,32 @@
     return out
   })
 
-  function seekFrom(e: PointerEvent): void {
+  const DRAG_PX = 4
+  let anchor = { x: 0, ms: 0 }
+  let dragging = $state(false)
+
+  function msAt(e: PointerEvent): number {
     const r = area.getBoundingClientRect()
-    store.seekOutput(((e.clientX - r.left) / r.width) * dur)
+    const f = (e.clientX - r.left) / r.width
+    return Math.min(Math.max(f, 0), 1) * dur
   }
   function down(e: PointerEvent): void {
     scrubbing = true
+    dragging = false
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-    seekFrom(e)
+    anchor = { x: e.clientX, ms: msAt(e) }
+    store.seekOutput(anchor.ms)
   }
   function move(e: PointerEvent): void {
-    if (scrubbing) seekFrom(e)
+    if (!scrubbing) return
+    // Drag past a few pixels to select a range; a plain click just seeks.
+    if (!dragging && Math.abs(e.clientX - anchor.x) >= DRAG_PX) dragging = true
+    if (dragging) store.selectRange(anchor.ms, msAt(e))
+    else store.seekOutput(msAt(e))
   }
   function up(): void {
     scrubbing = false
+    dragging = false
   }
   function key(e: KeyboardEvent): void {
     const step = e.shiftKey ? 5000 : 1000
@@ -116,6 +128,7 @@
     {#if store.selection}
       <span
         class="selection"
+        class:dragging
         data-testid="selection"
         style="left:{pct(store.selection.start)}%;width:{pct(
           store.selection.end,
@@ -231,6 +244,9 @@
     border-left: 2px solid var(--accent);
     border-right: 2px solid var(--accent);
     pointer-events: none;
+  }
+  .selection.dragging {
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
   }
   .pause {
     position: absolute;

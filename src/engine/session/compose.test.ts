@@ -5,6 +5,8 @@ import {
   withCompose,
   type ComposedManifest,
 } from './compose'
+import { SessionClock } from '../recording/clock'
+import { trackExtent } from '../timeline/time'
 
 const base: ComposedManifest = {
   version: 1,
@@ -20,15 +22,37 @@ const base: ComposedManifest = {
 }
 
 describe('compose state', () => {
-  it('reports duration with pauses removed', () => {
-    expect(outputDuration(base)).toBe(3500)
+  it('keeps the whole recorded duration when there are pauses', () => {
+    // durationMs is already recorded time (pauses left out); don't subtract again.
+    expect(outputDuration(base)).toBe(4000)
+  })
+
+  it('a take with a pause loses nothing on either side of it', () => {
+    let t = 0
+    const clock = new SessionClock(() => t)
+    clock.start()
+    t = 2000 // 2s recorded
+    clock.pause()
+    t = 2500 // 0.5s paused
+    clock.resume()
+    t = 5000 // 2.5s more
+    const durationMs = clock.elapsed()
+    const pauses = clock.finish()
+    expect(durationMs).toBe(4500)
+    const m = { ...base, durationMs, pauses }
+    expect(outputDuration(m)).toBe(5000 - 500)
+    expect(readCompose(m).edit.ranges).toEqual([{ startMs: 0, endMs: 4500 }])
+    // A track covering the whole take ends at the end of the output.
+    expect(
+      trackExtent(pauses, { startOffsetMs: 0, endOffsetMs: 5000 }),
+    ).toEqual({ start: 0, end: 4500 })
   })
 
   it('loads old sessions with defaults from the recorded bubble', () => {
     const c = readCompose(base)
     expect(c.bubble.shape).toBe('circle')
     expect(c.bubble.placement).toEqual(base.bubble!.placement)
-    expect(c.edit.ranges).toEqual([{ startMs: 0, endMs: 3500 }])
+    expect(c.edit.ranges).toEqual([{ startMs: 0, endMs: 4000 }])
   })
 
   it('falls back when there is no recorded bubble', () => {

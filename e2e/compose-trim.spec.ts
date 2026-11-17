@@ -71,3 +71,29 @@ test('cut a section, undo it, and export without it', async ({ page }) => {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
   }
 })
+
+test('dragging on the timeline highlights a selection', async ({ page }) => {
+  await page.goto('./')
+  await page.getByRole('button', { name: 'Choose screen' }).click()
+  await page.getByRole('switch', { name: '3s countdown' }).click()
+  await page.getByRole('button', { name: 'Start recording' }).click()
+  await expect(page.getByText('Recording', { exact: true })).toBeVisible()
+  await page.waitForTimeout(3000)
+  await page.getByRole('button', { name: 'Stop' }).click()
+  await expect(page.getByText(/Take saved/)).toBeVisible()
+  await page.getByRole('button', { name: /Compose/ }).click()
+
+  const area = page.getByRole('slider', { name: 'Playhead' })
+  await expect(area).toBeVisible()
+  const box = (await area.boundingBox())!
+  const y = box.y + box.height / 2
+  await page.mouse.move(box.x + box.width * 0.2, y)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width * 0.4, y, { steps: 5 })
+  const sel = page.getByTestId('selection')
+  await expect(sel).toBeVisible() // visible while still dragging
+  await page.mouse.up()
+  const s = (await sel.boundingBox())!
+  expect(s.width / box.width).toBeGreaterThan(0.15)
+  expect(s.width / box.width).toBeLessThan(0.25)
+})
