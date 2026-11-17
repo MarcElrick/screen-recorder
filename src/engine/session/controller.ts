@@ -1,5 +1,6 @@
 import { SessionClock } from '../recording/clock'
 import { withTimeout } from '../recording/timeout'
+import { fixWebm } from '../recording/webm-fix'
 import { pickMime } from '../recording/mime'
 import {
   TrackRecorder,
@@ -227,6 +228,25 @@ export class SessionController {
     this.recorders = []
     this.screen = null
     this.camera = null
+    // MediaRecorder WebM has no duration or seek index; repair it so every
+    // browser can seek it. Best effort: any problem keeps the original.
+    const repaired = new Set<string>()
+    tracks = await Promise.all(
+      tracks.map(async (t) => {
+        try {
+          const blob = await withTimeout(
+            fixWebm(t.blob),
+            30_000,
+            'Repairing the file',
+          )
+          if (blob === t.blob) return t
+          repaired.add(t.file)
+          return { ...t, blob }
+        } catch {
+          return t
+        }
+      }),
+    )
     const manifest = buildManifest({
       id: this.sessionId,
       createdAt: new Date(),
@@ -240,12 +260,13 @@ export class SessionController {
     })
     let persisted = false
     try {
-      if (!canStreamToOpfs()) {
-        // Recorded in memory (e.g. Firefox): write the finished files now.
-        await Promise.all(
-          tracks.map((t) => persistFile(this.sessionId, t.file, t.blob)),
-        )
-      }
+      // Files recorded in memory, or repaired after streaming, are written whole.
+      const toWrite = tracks.filter(
+        (t) => !canStreamToOpfs() || repaired.has(t.file),
+      )
+      await Promise.all(
+        toWrite.map((t) => persistFile(this.sessionId, t.file, t.blob)),
+      )
       await writeJson(this.sessionId, 'session.json', manifest)
       persisted = true
     } catch (err) {
