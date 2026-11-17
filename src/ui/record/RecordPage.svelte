@@ -6,7 +6,7 @@
   import SelectField from '../components/SelectField.svelte'
   import SliderField from '../components/SliderField.svelte'
   import SwitchField from '../components/SwitchField.svelte'
-  import { MIC_OFF, RecorderStore } from './recorder.svelte'
+  import { MIC_DEFAULT, MIC_OFF, RecorderStore } from './recorder.svelte'
   import { formatTime } from './format'
   import StreamVideo from './StreamVideo.svelte'
 
@@ -14,7 +14,11 @@
   onMount(() => void r.init())
 
   const bubble = $derived(bubblePlacement({ corner: r.corner, size: r.size }))
-  const micOptions = $derived([{ id: MIC_OFF, label: 'Off' }, ...r.mics])
+  const micOptions = $derived([
+    { id: MIC_OFF, label: 'Off' },
+    { id: MIC_DEFAULT, label: 'System default' },
+    ...r.mics.filter((m) => m.id !== 'default'),
+  ])
   const recording = $derived(r.phase === 'recording')
   const paused = $derived(r.phase === 'paused')
   const live = $derived(recording || paused)

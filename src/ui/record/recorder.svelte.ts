@@ -14,6 +14,7 @@ import {
 } from '../../engine'
 
 export const MIC_OFF = 'off'
+export const MIC_DEFAULT = 'default'
 
 /** Svelte-reactive wrapper around the framework-free SessionController. */
 export class RecorderStore {
@@ -29,7 +30,7 @@ export class RecorderStore {
   cameras = $state<DeviceInfo[]>([])
   mics = $state<DeviceInfo[]>([])
   cameraId = $state('')
-  micId = $state(MIC_OFF)
+  micId = $state(MIC_DEFAULT)
   cameraOn = $state(true)
   level = $state(0)
   corner = $state<Corner>(DEFAULT_BUBBLE.corner)
@@ -99,7 +100,7 @@ export class RecorderStore {
         camera: this.cameraOn,
         mic: wantMic,
         cameraId: this.cameraId || undefined,
-        micId: wantMic && this.micId ? this.micId : undefined,
+        micId: wantMic && this.micId !== MIC_DEFAULT ? this.micId : undefined,
       })
       this.cameraStream = stream
       this.controller.setCamera(stream)

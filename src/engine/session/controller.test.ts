@@ -14,9 +14,13 @@ class FakeTrack extends EventTarget {
   }
 }
 class FakeStream {
-  constructor(public tracks: FakeTrack[] = [new FakeTrack()]) {}
+  constructor(
+    public tracks: FakeTrack[] = [new FakeTrack()],
+    private audio = false,
+  ) {}
   getTracks = (): FakeTrack[] => this.tracks
   getVideoTracks = (): FakeTrack[] => this.tracks
+  getAudioTracks = (): FakeTrack[] => (this.audio ? [new FakeTrack()] : [])
 }
 const recorders: FakeRecorder[] = []
 class FakeRecorder {
@@ -72,7 +76,9 @@ describe('SessionController', () => {
   it('records screen + camera together through pause/resume/stop', async () => {
     const c = make()
     c.setScreen(new FakeStream() as unknown as MediaStream)
-    c.setCamera(new FakeStream() as unknown as MediaStream)
+    c.setCamera(
+      new FakeStream([new FakeTrack()], true) as unknown as MediaStream,
+    )
     c.setBubble({ corner: 'bottom-right', size: 0.2 })
     await c.start()
     expect(c.state.phase).toBe('recording')
@@ -93,6 +99,7 @@ describe('SessionController', () => {
       ['screen', 6],
       ['camera', 6],
     ])
+    expect(out!.manifest.tracks.map((t) => t.hasAudio)).toEqual([false, true])
     expect(out!.manifest.bubble?.settings.corner).toBe('bottom-right')
   })
 

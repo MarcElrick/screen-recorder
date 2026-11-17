@@ -13,6 +13,8 @@ export interface TrackResult {
   /** Raw ms on the session clock when this track ended. */
   endOffsetMs: number
   endedEarly: boolean
+  /** Whether the recorded stream carried an audio track. */
+  hasAudio: boolean
 }
 
 export interface TrackRecorderOptions {
@@ -37,8 +39,10 @@ export class TrackRecorder {
   private endedEarly = false
   private stopped = false
   private failed = false
+  private readonly hasAudio: boolean
 
   constructor(private readonly o: TrackRecorderOptions) {
+    this.hasAudio = o.stream.getAudioTracks().length > 0
     this.recorder = new MediaRecorder(
       o.stream,
       o.mime ? { mimeType: o.mime } : undefined,
@@ -101,6 +105,7 @@ export class TrackRecorder {
       startOffsetMs: this.startOffsetMs,
       endOffsetMs: this.endOffsetMs,
       endedEarly: this.endedEarly,
+      hasAudio: this.hasAudio,
     }
   }
 }

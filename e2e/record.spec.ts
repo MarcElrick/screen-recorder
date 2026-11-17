@@ -8,6 +8,19 @@ test('record, pause, resume and stop produces screen + camera files with a manif
     page.getByRole('button', { name: 'Start recording' }),
   ).toBeDisabled()
 
+  // The microphone should be on by default and show a live level.
+  await expect(
+    page.getByRole('meter', { name: 'Microphone level' }),
+  ).toBeVisible()
+  await expect
+    .poll(() =>
+      page
+        .getByRole('meter', { name: 'Microphone level' })
+        .getAttribute('aria-valuenow')
+        .then(Number),
+    )
+    .toBeGreaterThan(0)
+
   await page.getByRole('button', { name: 'Choose screen' }).click()
   await expect(
     page.getByRole('button', { name: 'Start recording' }),
@@ -54,6 +67,10 @@ test('record, pause, resume and stop produces screen + camera files with a manif
     'screen',
     'camera',
   ])
+  const camera = manifest!.json.tracks.find(
+    (t: { kind: string }) => t.kind === 'camera',
+  )
+  expect(camera.hasAudio).toBe(true)
   for (const size of Object.values(manifest!.sizes))
     expect(size).toBeGreaterThan(0)
 })

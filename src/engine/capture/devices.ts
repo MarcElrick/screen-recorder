@@ -41,6 +41,20 @@ export function getCameraAndMic(opts: {
   camera: boolean
   mic: boolean
 }): Promise<MediaStream> {
+  return getCameraAndMicOnce(opts).catch(async (err) => {
+    // A missing or blocked camera must not take the microphone down with it.
+    if (opts.camera && opts.mic)
+      return getCameraAndMicOnce({ ...opts, camera: false })
+    throw err
+  })
+}
+
+function getCameraAndMicOnce(opts: {
+  cameraId?: string
+  micId?: string
+  camera: boolean
+  mic: boolean
+}): Promise<MediaStream> {
   return navigator.mediaDevices.getUserMedia({
     video: opts.camera
       ? {
@@ -64,6 +78,8 @@ export function watchLevel(
 ): () => void {
   if (stream.getAudioTracks().length === 0) return () => {}
   const ctx = new AudioContext()
+  // Browsers may start the context suspended; the meter stays flat until resumed.
+  void ctx.resume()
   const analyser = ctx.createAnalyser()
   analyser.fftSize = 512
   ctx.createMediaStreamSource(stream).connect(analyser)

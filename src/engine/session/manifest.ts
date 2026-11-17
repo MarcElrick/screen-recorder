@@ -10,6 +10,7 @@ export interface ManifestTrack {
   startOffsetMs: number
   endOffsetMs: number
   endedEarly: boolean
+  hasAudio: boolean
   sizeBytes: number
 }
 
@@ -49,6 +50,7 @@ export function buildManifest(args: {
       startOffsetMs: Math.round(t.startOffsetMs),
       endOffsetMs: Math.round(t.endOffsetMs),
       endedEarly: t.endedEarly,
+      hasAudio: t.hasAudio,
       sizeBytes: t.blob.size,
     })),
     bubble: args.bubble,
