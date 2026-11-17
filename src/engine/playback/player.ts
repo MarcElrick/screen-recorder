@@ -5,7 +5,12 @@ import {
 } from '../timeline/editlist'
 import { trackExtent } from '../timeline/time'
 import type { SessionManifest } from '../session/manifest'
-import { renderFrame, type Layout } from '../compositing/render'
+import {
+  renderFrame,
+  type FrameSource,
+  type Layout,
+} from '../compositing/render'
+import type { DecodedVideo } from './decoded-video'
 import { planSync } from './sync'
 
 type Listener = () => void
@@ -22,6 +27,13 @@ export class SessionPlayer {
   private _playhead = 0
   private listeners = new Set<Listener>()
   private lastSeek = new WeakMap<HTMLVideoElement, number>()
+  private frames: { screen: DecodedVideo | null; camera: DecodedVideo | null } =
+    {
+      screen: null,
+      camera: null,
+    }
+  private lastOutputMs = 0
+  private lastCameraActive = false
   layout: Layout
   readonly duration: number
   private readonly screenExtent: { start: number; end: number }
@@ -77,6 +89,9 @@ export class SessionPlayer {
     this.raf = 0
     this.screen.pause()
     this.camera?.pause()
+    this.frames.screen?.dispose()
+    this.frames.camera?.dispose()
+    this.frames = { screen: null, camera: null }
     this.listeners.clear()
   }
 
@@ -138,35 +153,68 @@ export class SessionPlayer {
 
   private syncAndDraw(): void {
     const outputMs = editedToOutput(this.edit, this._playhead)
-    this.align(this.screen, this.screenExtent, outputMs)
+    this.lastOutputMs = outputMs
+    // Frames come from WebCodecs when available; the screen element is then
+    // idle, and the camera element only plays the audio.
+    if (!this.frames.screen)
+      this.align(this.screen, this.screenExtent, outputMs)
     let cameraActive = false
     if (this.camera && this.cameraExtent) {
       cameraActive = this.align(this.camera, this.cameraExtent, outputMs)
     }
+    this.lastCameraActive = cameraActive
     this.draw(cameraActive)
   }
 
+  /** Use WebCodecs-decoded frames instead of the video elements for drawing. */
+  setFrameSources(
+    screen: DecodedVideo | null,
+    camera: DecodedVideo | null,
+  ): void {
+    this.frames.screen?.dispose()
+    this.frames.camera?.dispose()
+    this.frames = { screen, camera }
+    if (screen && !this._playing) this.screen.pause()
+  }
+
   /** Redraw the current frame (call after layout changes). */
-  draw(cameraActive = true): void {
-    const w = this.screen.videoWidth
-    const h = this.screen.videoHeight
-    if (!w || !h) return
+  draw(cameraActive = this.lastCameraActive): void {
+    let screenSrc: FrameSource
+    const df = this.frames.screen
+    if (df) {
+      const f = df.frameAt(this.lastOutputMs - this.screenExtent.start)
+      if (!f) return // still decoding: keep the previous frame on the canvas
+      screenSrc = { source: f, width: f.displayWidth, height: f.displayHeight }
+    } else {
+      const w = this.screen.videoWidth
+      const h = this.screen.videoHeight
+      if (!w || !h) return
+      screenSrc = { source: this.screen, width: w, height: h }
+    }
+    const w = screenSrc.width
+    const h = screenSrc.height
     if (this.canvas.width !== w) this.canvas.width = w
     if (this.canvas.height !== h) this.canvas.height = h
     const ctx = this.canvas.getContext('2d')
     if (!ctx) return
-    const cam =
-      this.camera && cameraActive
-        ? {
-            source: this.camera,
-            width: this.camera.videoWidth,
-            height: this.camera.videoHeight,
-          }
-        : null
+    let cam: FrameSource | null = null
+    if (this.camera && cameraActive && this.cameraExtent) {
+      const cf = this.frames.camera?.frameAt(
+        this.lastOutputMs - this.cameraExtent.start,
+      )
+      if (cf)
+        cam = { source: cf, width: cf.displayWidth, height: cf.displayHeight }
+      else if (!this.frames.camera && this.camera.videoWidth > 0)
+        cam = {
+          source: this.camera,
+          width: this.camera.videoWidth,
+          height: this.camera.videoHeight,
+        }
+    }
     renderFrame(
       ctx as never,
       { width: w, height: h },
-      { source: this.screen, width: w, height: h },
+      screenSrc,
       cam,
       this.layout,
     )

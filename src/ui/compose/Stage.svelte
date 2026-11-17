@@ -14,7 +14,11 @@
 </script>
 
 <div class="frame" style="--aspect:{store.aspect}">
-  <canvas bind:this={canvas} aria-label="Composed preview"></canvas>
+  <canvas
+    bind:this={canvas}
+    aria-label="Composed preview"
+    data-frames={store.framesMode}
+  ></canvas>
   <video
     bind:this={screenEl}
     src={store.screenUrl}

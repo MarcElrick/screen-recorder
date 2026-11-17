@@ -6,7 +6,7 @@
  * Cluster data untouched.
  */
 
-const ID = {
+export const ID = {
   EBML: 0x1a45dfa3,
   Segment: 0x18538067,
   SeekHead: 0x114d9b74,
@@ -27,6 +27,10 @@ const ID = {
   TrackEntry: 0xae,
   TrackNumber: 0xd7,
   TrackType: 0x83,
+  CodecID: 0x86,
+  Video: 0xe0,
+  PixelWidth: 0xb0,
+  PixelHeight: 0xba,
 } as const
 
 const SEGMENT_LEVEL = new Set<number>([
@@ -51,7 +55,7 @@ interface Header {
   hdr: number
 }
 
-function readHeader(b: Uint8Array, pos: number): Header | null {
+export function readHeader(b: Uint8Array, pos: number): Header | null {
   if (pos >= b.length) return null
   const first = b[pos]
   let idLen = 1
@@ -127,7 +131,7 @@ interface Parsed {
   timecodeScale: number
 }
 
-function forEachChild(
+export function forEachChild(
   b: Uint8Array,
   start: number,
   end: number,
@@ -142,7 +146,7 @@ function forEachChild(
   }
 }
 
-function readUint(b: Uint8Array, s: number, e: number): number {
+export function readUint(b: Uint8Array, s: number, e: number): number {
   let v = 0
   for (let i = s; i < e; i++) v = v * 256 + b[i]
   return v

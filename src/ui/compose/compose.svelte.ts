@@ -1,4 +1,5 @@
 import {
+  DecodedVideo,
   fixInfiniteDuration,
   History,
   SessionLoadError,
@@ -55,6 +56,8 @@ export class ComposeStore {
   playhead = $state(0)
   playing = $state(false)
   aspect = $state(16 / 9)
+  /** Where preview frames come from: the video elements or WebCodecs. */
+  framesMode = $state<'element' | 'webcodecs'>('element')
   canUndo = $state(false)
   canRedo = $state(false)
 
@@ -172,6 +175,7 @@ export class ComposeStore {
   ): void {
     if (!this.session || !this.compose) return
     this.detach()
+    this.framesMode = 'element'
     const p = new SessionPlayer(
       this.session.manifest,
       this.compose.edit,
@@ -195,6 +199,25 @@ export class ComposeStore {
       this.hasCameraVideo = camera.videoWidth > 0
     })
     p.start()
+    void this.useDecodedFrames(p)
+  }
+
+  /** Swap in WebCodecs frames when the browser can decode these files. */
+  private async useDecodedFrames(p: SessionPlayer): Promise<void> {
+    const s = this.session
+    if (!s) return
+    const [screen, camera] = await Promise.all([
+      s.screen ? DecodedVideo.open(s.screen) : null,
+      s.camera ? DecodedVideo.open(s.camera) : null,
+    ])
+    if (this.player !== p || !screen) {
+      screen?.dispose()
+      camera?.dispose()
+      return
+    }
+    this.aspect = screen.width / screen.height
+    p.setFrameSources(screen, camera)
+    this.framesMode = 'webcodecs'
   }
 
   detach(): void {

@@ -31,6 +31,7 @@ export type { ComposeState, ComposedManifest } from './session/compose'
 export { History } from './session/history'
 export { SessionPlayer } from './playback/player'
 export { planSync } from './playback/sync'
+export { DecodedVideo } from './playback/decoded-video'
 export { fixInfiniteDuration } from './playback/duration-fix'
 export { decodePeaks } from './playback/waveform'
 export {
