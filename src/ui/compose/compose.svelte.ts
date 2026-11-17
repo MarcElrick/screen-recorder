@@ -1,5 +1,6 @@
 import {
   DecodedVideo,
+  RemoteRenderer,
   fixInfiniteDuration,
   History,
   SessionLoadError,
@@ -57,7 +58,7 @@ export class ComposeStore {
   playing = $state(false)
   aspect = $state(16 / 9)
   /** Where preview frames come from: the video elements or WebCodecs. */
-  framesMode = $state<'element' | 'webcodecs'>('element')
+  framesMode = $state<'element' | 'webcodecs' | 'worker'>('element')
   canUndo = $state(false)
   canRedo = $state(false)
 
@@ -198,8 +199,35 @@ export class ComposeStore {
     camera?.addEventListener('loadedmetadata', () => {
       this.hasCameraVideo = camera.videoWidth > 0
     })
+    void this.chooseRenderer(p, canvas)
+  }
+
+  /**
+   * Best renderer first: a worker with its own decoders and canvas, then
+   * WebCodecs frames drawn on the main thread, then the video elements.
+   */
+  private async chooseRenderer(
+    p: SessionPlayer,
+    canvas: HTMLCanvasElement,
+  ): Promise<void> {
+    const s = this.session
+    if (s?.screen && RemoteRenderer.supported(canvas)) {
+      const remote = await RemoteRenderer.create(s.screen, s.camera)
+      if (this.player !== p) {
+        remote?.dispose()
+        return
+      }
+      if (remote) {
+        remote.attachCanvas(canvas)
+        this.aspect = remote.width / remote.height
+        p.setRemote(remote)
+        this.framesMode = 'worker'
+        p.start()
+        return
+      }
+    }
     p.start()
-    void this.useDecodedFrames(p)
+    await this.useDecodedFrames(p)
   }
 
   /** Swap in WebCodecs frames when the browser can decode these files. */

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test('compose draws WebCodecs-decoded frames, and they are not black', async ({
+test('compose renders in a worker with WebCodecs frames, and they are not black', async ({
   page,
 }) => {
   await page.goto('./')
@@ -14,16 +14,26 @@ test('compose draws WebCodecs-decoded frames, and they are not black', async ({
   await page.getByRole('button', { name: /Compose/ }).click()
 
   const canvas = page.getByLabel('Composed preview')
-  await expect(canvas).toHaveAttribute('data-frames', 'webcodecs')
+  await expect(canvas).toHaveAttribute('data-frames', 'worker')
 
-  const lit = (): Promise<number> =>
-    canvas.evaluate((c: HTMLCanvasElement) => {
-      const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data
+  // The canvas belongs to the worker, so inspect it through a screenshot.
+  const lit = async (): Promise<number> => {
+    const png = (await canvas.screenshot()).toString('base64')
+    return page.evaluate(async (b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+      const bmp = await createImageBitmap(
+        new Blob([bytes], { type: 'image/png' }),
+      )
+      const c = new OffscreenCanvas(bmp.width, bmp.height)
+      const g = c.getContext('2d')!
+      g.drawImage(bmp, 0, 0)
+      const d = g.getImageData(0, 0, c.width, c.height).data
       let n = 0
       for (let i = 0; i < d.length; i += 4 * 97)
         if (d[i] + d[i + 1] + d[i + 2] > 30) n++
       return n
-    })
+    }, png)
+  }
   await expect.poll(lit).toBeGreaterThan(10)
 
   // Scrubbing still produces frames.

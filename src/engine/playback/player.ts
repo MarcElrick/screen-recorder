@@ -11,6 +11,7 @@ import {
   type Layout,
 } from '../compositing/render'
 import type { DecodedVideo } from './decoded-video'
+import type { RemoteRenderer } from '../compositing/remote-renderer'
 import { planSync } from './sync'
 
 type Listener = () => void
@@ -32,6 +33,7 @@ export class SessionPlayer {
       screen: null,
       camera: null,
     }
+  private remote: RemoteRenderer | null = null
   private lastOutputMs = 0
   private lastCameraActive = false
   layout: Layout
@@ -78,7 +80,12 @@ export class SessionPlayer {
     if (this.raf) return
     this.lastTick = performance.now()
     const loop = (now: number): void => {
-      this.tick(now)
+      try {
+        this.tick(now)
+      } catch (err) {
+        // A render error must not stop the clock.
+        console.error('Compose tick failed', err)
+      }
       this.raf = requestAnimationFrame(loop)
     }
     this.raf = requestAnimationFrame(loop)
@@ -92,6 +99,8 @@ export class SessionPlayer {
     this.frames.screen?.dispose()
     this.frames.camera?.dispose()
     this.frames = { screen: null, camera: null }
+    this.remote?.dispose()
+    this.remote = null
     this.listeners.clear()
   }
 
@@ -166,6 +175,12 @@ export class SessionPlayer {
     this.draw(cameraActive)
   }
 
+  /** Render in a worker: this class then only keeps time and audio. */
+  setRemote(r: RemoteRenderer | null): void {
+    this.remote = r
+    if (r) this.screen.pause()
+  }
+
   /** Use WebCodecs-decoded frames instead of the video elements for drawing. */
   setFrameSources(
     screen: DecodedVideo | null,
@@ -179,6 +194,21 @@ export class SessionPlayer {
 
   /** Redraw the current frame (call after layout changes). */
   draw(cameraActive = this.lastCameraActive): void {
+    if (this.remote) {
+      this.remote.draw({
+        screenMs: this.lastOutputMs - this.screenExtent.start,
+        cameraMs:
+          cameraActive && this.cameraExtent
+            ? this.lastOutputMs - this.cameraExtent.start
+            : null,
+        // Plain copy: the layout may be a reactive proxy, which can't be cloned.
+        layout: {
+          shape: this.layout.shape,
+          placement: { ...this.layout.placement },
+        },
+      })
+      return
+    }
     let screenSrc: FrameSource
     const df = this.frames.screen
     if (df) {
