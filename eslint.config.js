@@ -13,7 +13,7 @@ export default ts.config(
   ...svelte.configs['flat/prettier'],
   { languageOptions: { globals: { ...globals.browser } } },
   {
-    files: ['**/*.svelte'],
+    files: ['**/*.svelte', '**/*.svelte.ts'],
     languageOptions: { parserOptions: { parser: ts.parser } },
   },
 )

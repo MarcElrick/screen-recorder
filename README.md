@@ -22,10 +22,12 @@ pnpm dev          # dev server
 pnpm check        # typecheck
 pnpm lint         # eslint
 pnpm format       # prettier --write
+pnpm test         # unit tests (vitest)
+pnpm test:e2e     # Playwright (set CHROMIUM_PATH to use a preinstalled Chromium)
 pnpm build
 ```
 
-Status: skeleton only, no features yet.
+Status: Record page works (screen + camera/mic recorded as separate WebM files with pause/resume, streamed to OPFS). Compose and Export are not built yet.
 
 ## License
 
