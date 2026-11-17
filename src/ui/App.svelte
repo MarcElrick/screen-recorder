@@ -2,6 +2,7 @@
   import ComposePage from './compose/ComposePage.svelte'
   import ExportPage from './export/ExportPage.svelte'
   import RecordPage from './record/RecordPage.svelte'
+  import RecoveryBanner from './takes/RecoveryBanner.svelte'
   import TakesPage from './takes/TakesPage.svelte'
 
   type Page = 'record' | 'compose' | 'export' | 'takes'
@@ -48,6 +49,12 @@
       Takes
     </button>
   </header>
+  <RecoveryBanner
+    onrecovered={(id) => {
+      takeId = id
+      page = 'compose'
+    }}
+  />
   <!-- Record stays mounted (hidden) so live streams survive a trip to Compose. -->
   <main hidden={page !== 'record'}>
     <RecordPage />

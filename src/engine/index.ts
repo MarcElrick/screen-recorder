@@ -55,3 +55,9 @@ export type {
   ExportResult,
 } from './export/exporter'
 export * from './export/plan'
+export {
+  findUnfinished,
+  recoverTake,
+  discardUnfinished,
+} from './session/recovery'
+export type { UnfinishedTake } from './session/recovery'

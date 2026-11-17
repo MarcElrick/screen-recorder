@@ -1,5 +1,6 @@
 import { SessionClock } from '../recording/clock'
 import { withTimeout } from '../recording/timeout'
+import { JournalWriter, type JournalTrack } from './journal'
 import { fixWebm } from '../recording/webm-fix'
 import { pickMime } from '../recording/mime'
 import {
@@ -49,6 +50,7 @@ export class SessionController {
   private camera: MediaStream | null = null
   private recorders: TrackRecorder[] = []
   private clock = new SessionClock()
+  private startedAt = new Date()
   private sessionId = ''
   private bubble: BubbleSettings | null = null
   private countdownToken = 0
@@ -138,6 +140,7 @@ export class SessionController {
     try {
       const sinkFactory = this.deps.sinkFactory ?? defaultSinkFactory
       this.sessionId = this.deps.id?.() ?? `take-${Date.now()}`
+      this.startedAt = new Date()
       this.clock = this.deps.clock?.() ?? new SessionClock()
       const mk = async (
         kind: TrackKind,
@@ -171,6 +174,7 @@ export class SessionController {
         this.recorders.push(await mk('camera', 'camera.webm', this.camera))
       this.clock.start()
       for (const r of this.recorders) r.start()
+      this.startJournal()
     } catch (err) {
       this.dispatch({
         type: 'fail',
@@ -188,9 +192,41 @@ export class SessionController {
     }
   }
 
+  private journal: JournalWriter | null = null
+  private journalTracks: JournalTrack[] = []
+
+  private startJournal(): void {
+    if (!canStreamToOpfs()) return
+    this.journal = new JournalWriter(this.sessionId)
+    this.journalTracks = this.recorders.map((r) => ({
+      kind: r.kind,
+      file: r.file,
+      mime: r.mimeType,
+      startOffsetMs: r.startOffset,
+      hasAudio: r.hasAudioTrack,
+    }))
+    this.writeJournal(null)
+  }
+
+  private writeJournal(openPauseFrom: number | null): void {
+    this.journal?.write({
+      version: 1,
+      id: this.sessionId,
+      startedAt: this.startedAt.toISOString(),
+      tracks: this.journalTracks,
+      pauses: [...this.clock.pauses],
+      openPauseFrom,
+      bubble: this.bubble && {
+        settings: this.bubble,
+        placement: bubblePlacement(this.bubble),
+      },
+    })
+  }
+
   pause(): void {
     if (this.state.phase !== 'recording') return
     this.clock.pause()
+    this.writeJournal(this.clock.offset())
     this.recorders.forEach((r) => r.pause())
     this.dispatch({ type: 'pause' })
   }
@@ -198,6 +234,7 @@ export class SessionController {
   resume(): void {
     if (this.state.phase !== 'paused') return
     this.clock.resume()
+    this.writeJournal(null)
     this.recorders.forEach((r) => r.resume())
     this.dispatch({ type: 'resume' })
   }
@@ -275,6 +312,8 @@ export class SessionController {
         message: `Couldn't save to browser storage (${err instanceof Error ? err.message : err}). The take is kept in memory until you reload.`,
       })
     }
+    if (persisted) await this.journal?.remove()
+    this.journal = null
     if (!persisted) rememberSession(manifest, tracks)
     this.output = { manifest, tracks }
     this.dispatch({ type: 'stopped' })

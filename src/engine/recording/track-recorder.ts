@@ -72,6 +72,22 @@ export class TrackRecorder {
     this.o.onEnded?.(this.o.kind)
   }
 
+  get kind(): TrackKind {
+    return this.o.kind
+  }
+  get file(): string {
+    return this.o.file
+  }
+  get mimeType(): string {
+    return this.recorder.mimeType || this.o.mime || 'video/webm'
+  }
+  get startOffset(): number {
+    return this.startOffsetMs
+  }
+  get hasAudioTrack(): boolean {
+    return this.hasAudio
+  }
+
   start(): void {
     this.startOffsetMs = this.o.clock.offset()
     this.recorder.start(this.o.timesliceMs ?? 1000)

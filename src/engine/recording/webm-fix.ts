@@ -141,6 +141,8 @@ export function forEachChild(
   while (p < end) {
     const h = readHeader(b, p)
     if (!h || h.size < 0) return
+    // A child running past its parent is the truncated tail of a crashed file.
+    if (p + h.hdr + h.size > end) return
     fn(h, p + h.hdr)
     p += h.hdr + h.size
   }
@@ -409,5 +411,17 @@ export async function fixWebm(blob: Blob): Promise<Blob> {
     )
   } catch {
     return blob
+  }
+}
+
+/** Media duration (ms) of a WebM file, from its last block; null if unreadable. */
+export async function webmDurationMs(blob: Blob): Promise<number | null> {
+  try {
+    const p = parse(new Uint8Array(await blob.arrayBuffer()))
+    if (!p) return null
+    const maxTime = Math.max(...p.clusters.map((c) => c.maxTime))
+    return Math.round((maxTime * p.timecodeScale) / 1_000_000)
+  } catch {
+    return null
   }
 }

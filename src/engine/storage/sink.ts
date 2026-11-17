@@ -1,4 +1,5 @@
 import { withTimeout } from '../recording/timeout'
+import type { StreamReply, StreamRequest } from './opfs-stream.worker'
 
 /** Where recorded chunks go. OPFS in production, memory as a fallback/in tests. */
 export interface ChunkSink {
@@ -18,26 +19,67 @@ export class MemorySink implements ChunkSink {
   }
 }
 
-export class OpfsSink implements ChunkSink {
-  private constructor(
-    private readonly handle: FileSystemFileHandle,
-    private readonly writable: FileSystemWritableFileStream,
-  ) {}
+/**
+ * Streams chunks into an OPFS file from a worker (sync access handle), so the
+ * file grows during recording and survives a crash.
+ */
+export class StreamingSink implements ChunkSink {
+  private pending: ((r: StreamReply) => void) | null = null
 
-  static async create(dir: string, name: string): Promise<OpfsSink> {
-    const root = await navigator.storage.getDirectory()
-    const d = await root.getDirectoryHandle(dir, { create: true })
-    const handle = await d.getFileHandle(name, { create: true })
-    return new OpfsSink(handle, await handle.createWritable())
+  private constructor(
+    private readonly worker: Worker,
+    private readonly dir: string,
+    private readonly name: string,
+  ) {
+    worker.onmessage = (e: MessageEvent<StreamReply>) => {
+      const p = this.pending
+      this.pending = null
+      p?.(e.data)
+    }
+    worker.onerror = (e) => {
+      const p = this.pending
+      this.pending = null
+      p?.({ type: 'error', error: e.message || 'Storage worker failed' })
+    }
+  }
+
+  private send(m: StreamRequest, transfer: Transferable[] = []): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.pending = (r) =>
+        r.type === 'ok' ? resolve() : reject(new Error(r.error))
+      this.worker.postMessage(m, transfer)
+    })
+  }
+
+  static async create(dir: string, name: string): Promise<StreamingSink> {
+    const worker = new Worker(
+      new URL('./opfs-stream.worker.ts', import.meta.url),
+      { type: 'module' },
+    )
+    const sink = new StreamingSink(worker, dir, name)
+    try {
+      await sink.send({ type: 'open', dir, name })
+    } catch (err) {
+      worker.terminate()
+      throw err
+    }
+    return sink
   }
 
   async write(chunk: Blob): Promise<void> {
-    await this.writable.write(chunk)
+    const data = await chunk.arrayBuffer()
+    await this.send({ type: 'write', data }, [data])
   }
 
   async close(): Promise<Blob> {
-    await this.writable.close()
-    return this.handle.getFile()
+    try {
+      await this.send({ type: 'close' })
+    } finally {
+      this.worker.terminate()
+    }
+    const root = await navigator.storage.getDirectory()
+    const d = await root.getDirectoryHandle(this.dir)
+    return (await d.getFileHandle(this.name)).getFile()
   }
 }
 
@@ -55,17 +97,20 @@ export function opfsSupported(): boolean {
 }
 
 /**
- * Whether chunks can be streamed to OPFS while recording. Where the
- * browser has no `createWritable`, takes are held in memory and written once
- * on stop (see `persistFile`).
+ * Workers can write OPFS files directly with sync access handles. That API only
+ * exists inside workers, so it can't be feature-detected from the main thread;
+ * every browser with OPFS and workers has it.
+ */
+function syncHandleSupported(): boolean {
+  return typeof Worker !== 'undefined' && opfsSupported()
+}
+
+/**
+ * Whether chunks can be streamed to OPFS while recording (crash-safe).
+ * Otherwise takes are held in memory and written once on stop (`persistFile`).
  */
 export function canStreamToOpfs(): boolean {
-  return (
-    opfsSupported() &&
-    !forceMemory() &&
-    typeof FileSystemFileHandle !== 'undefined' &&
-    'createWritable' in FileSystemFileHandle.prototype
-  )
+  return opfsSupported() && !forceMemory() && syncHandleSupported()
 }
 
 function writeViaWorker(dir: string, name: string, data: Blob): Promise<void> {
@@ -88,28 +133,28 @@ function writeViaWorker(dir: string, name: string, data: Blob): Promise<void> {
   })
 }
 
-/** Write a whole file to OPFS (createWritable where reliable, else a worker). */
+/** Write a whole file to OPFS (a worker with a sync handle where available, else createWritable). */
 export async function persistFile(
   dir: string,
   name: string,
   data: Blob,
 ): Promise<void> {
   if (!opfsSupported()) throw new Error('Browser storage is not available')
-  if (canStreamToOpfs()) {
-    const root = await navigator.storage.getDirectory()
-    const d = await root.getDirectoryHandle(dir, { create: true })
-    const w = await (
-      await d.getFileHandle(name, { create: true })
-    ).createWritable()
-    await w.write(data)
-    await w.close()
+  if (syncHandleSupported()) {
+    await withTimeout(
+      writeViaWorker(dir, name, data),
+      60_000,
+      'Writing to storage',
+    )
     return
   }
-  await withTimeout(
-    writeViaWorker(dir, name, data),
-    60_000,
-    'Writing to storage',
-  )
+  const root = await navigator.storage.getDirectory()
+  const d = await root.getDirectoryHandle(dir, { create: true })
+  const w = await (
+    await d.getFileHandle(name, { create: true })
+  ).createWritable()
+  await w.write(data)
+  await w.close()
 }
 
 /**
@@ -174,7 +219,11 @@ export const defaultSinkFactory: SinkFactory = async (dir, name, onDegrade) => {
   if (canStreamToOpfs()) {
     try {
       return new ResilientSink(
-        await withTimeout(OpfsSink.create(dir, name), 5000, 'Opening storage'),
+        await withTimeout(
+          StreamingSink.create(dir, name),
+          5000,
+          'Opening storage',
+        ),
         onDegrade,
       )
     } catch {
