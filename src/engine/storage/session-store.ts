@@ -7,6 +7,32 @@ export interface LoadedSession {
   camera: Blob | null
 }
 
+/**
+ * Takes kept in memory for browsers without usable OPFS (Firefox). They last
+ * until the page is reloaded.
+ */
+const memory = new Map<
+  string,
+  {
+    manifest: SessionManifest
+    screen: Blob | null
+    camera: Blob | null
+    json: Map<string, unknown>
+  }
+>()
+
+export function rememberSession(
+  manifest: SessionManifest,
+  files: { kind: 'screen' | 'camera'; blob: Blob }[],
+): void {
+  memory.set(manifest.id, {
+    manifest,
+    screen: files.find((f) => f.kind === 'screen')?.blob ?? null,
+    camera: files.find((f) => f.kind === 'camera')?.blob ?? null,
+    json: new Map(),
+  })
+}
+
 async function root(): Promise<FileSystemDirectoryHandle> {
   return navigator.storage.getDirectory()
 }
@@ -15,8 +41,12 @@ async function root(): Promise<FileSystemDirectoryHandle> {
 export async function listSessions(): Promise<
   { id: string; createdAt: string; durationMs: number }[]
 > {
-  if (!opfsSupported()) return []
   const out: { id: string; createdAt: string; durationMs: number }[] = []
+  for (const { manifest: m } of memory.values()) {
+    out.push({ id: m.id, createdAt: m.createdAt, durationMs: m.durationMs })
+  }
+  if (!opfsSupported())
+    return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   const r = (await root()) as unknown as {
     entries(): AsyncIterable<[string, FileSystemHandle]>
   }
@@ -42,6 +72,12 @@ export async function listSessions(): Promise<
 export class SessionLoadError extends Error {}
 
 export async function loadSession(id: string): Promise<LoadedSession> {
+  const mem = memory.get(id)
+  if (mem) {
+    if (!mem.screen)
+      throw new SessionLoadError('This take has no screen recording.')
+    return { manifest: mem.manifest, screen: mem.screen, camera: mem.camera }
+  }
   if (!opfsSupported())
     throw new SessionLoadError(
       'Local storage is not available in this browser.',
@@ -78,6 +114,8 @@ export async function loadSession(id: string): Promise<LoadedSession> {
 }
 
 export function saveManifest(id: string, manifest: unknown): Promise<void> {
+  const mem = memory.get(id)
+  if (mem) mem.manifest = manifest as SessionManifest
   return writeJson(id, 'session.json', manifest)
 }
 
@@ -85,6 +123,8 @@ export async function readCachedJson<T>(
   id: string,
   name: string,
 ): Promise<T | null> {
+  const mem = memory.get(id)
+  if (mem) return (mem.json.get(name) as T | undefined) ?? null
   try {
     const dir = await (await root()).getDirectoryHandle(id)
     return JSON.parse(
@@ -95,4 +135,15 @@ export async function readCachedJson<T>(
   }
 }
 
-export const writeCachedJson = writeJson
+export function writeCachedJson(
+  id: string,
+  name: string,
+  data: unknown,
+): Promise<void> {
+  const mem = memory.get(id)
+  if (mem) {
+    mem.json.set(name, data)
+    return Promise.resolve()
+  }
+  return writeJson(id, name, data)
+}

@@ -8,9 +8,11 @@ import {
 } from '../recording/track-recorder'
 import {
   defaultSinkFactory,
+  opfsSupported,
   writeJson,
   type SinkFactory,
 } from '../storage/sink'
+import { rememberSession } from '../storage/session-store'
 import { bubblePlacement, type BubbleSettings } from '../compositing/placement'
 import { buildManifest, type SessionManifest } from './manifest'
 import {
@@ -239,6 +241,8 @@ export class SessionController {
     } catch {
       /* manifest stays in memory */
     }
+    if (!opfsSupported()) rememberSession(manifest, tracks)
+    if (!opfsSupported()) rememberSession(manifest, tracks)
     this.output = { manifest, tracks }
     this.dispatch({ type: 'stopped' })
     return this.output
