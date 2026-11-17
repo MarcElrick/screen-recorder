@@ -7,4 +7,12 @@ describe('pickMime', () => {
     expect(pickMime((m) => m === 'video/webm')).toBe('video/webm')
     expect(pickMime(() => false)).toBeUndefined()
   })
+
+  it('does not declare opus for a video-only stream', () => {
+    const picked = pickMime(() => true, { video: true, audio: false })
+    expect(picked).toBe('video/webm;codecs=vp9')
+    expect(pickMime(() => true, { video: false, audio: true })).toBe(
+      'audio/webm;codecs=opus',
+    )
+  })
 })

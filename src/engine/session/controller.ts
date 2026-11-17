@@ -51,7 +51,6 @@ export class SessionController {
   private sessionId = ''
   private bubble: BubbleSettings | null = null
   private countdownToken = 0
-  private mime: string | undefined
   output: SessionOutput | null = null
 
   constructor(private readonly deps: ControllerDeps = {}) {}
@@ -139,7 +138,6 @@ export class SessionController {
       const sinkFactory = this.deps.sinkFactory ?? defaultSinkFactory
       this.sessionId = this.deps.id?.() ?? `take-${Date.now()}`
       this.clock = this.deps.clock?.() ?? new SessionClock()
-      this.mime = pickMime()
       const mk = async (
         kind: TrackKind,
         file: string,
@@ -149,7 +147,10 @@ export class SessionController {
           kind,
           file,
           stream,
-          mime: this.mime,
+          mime: pickMime(undefined, {
+            video: stream.getVideoTracks().length > 0,
+            audio: stream.getAudioTracks().length > 0,
+          }),
           sink: await sinkFactory(this.sessionId, file, () =>
             this.dispatch({
               type: 'notice',
