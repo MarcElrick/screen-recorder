@@ -1,20 +1,76 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
+  import { SpeechModel, speech, type ModelState } from '../engine'
+  import { activity } from './activity.svelte'
+  import AnnotatePage from './annotate/AnnotatePage.svelte'
   import ComposePage from './compose/ComposePage.svelte'
   import ExportPage from './export/ExportPage.svelte'
   import RecordPage from './record/RecordPage.svelte'
   import RecoveryBanner from './takes/RecoveryBanner.svelte'
   import TakesPage from './takes/TakesPage.svelte'
 
-  type Page = 'record' | 'compose' | 'export' | 'takes'
+  type Page = 'record' | 'annotate' | 'compose' | 'export' | 'takes'
   let page = $state<Page>('record')
   /** The take chosen from the Takes list (otherwise the newest is used). */
   let takeId = $state<string | undefined>()
 
-  const steps: { id: Page; label: string; enabled: boolean }[] = [
+  const steps: {
+    id: Page
+    label: string
+    enabled: boolean
+    optional?: boolean
+  }[] = [
     { id: 'record', label: 'Record', enabled: true },
+    { id: 'annotate', label: 'Annotate', enabled: true, optional: true },
     { id: 'compose', label: 'Compose', enabled: true },
     { id: 'export', label: 'Export', enabled: true },
   ]
+
+  // The speech model (large) is fetched into the browser cache in the
+  // background, once, when the app is idle and nothing is recording, so that
+  // Annotate opens with it ready. It is cached, so later visits don't download.
+  let model = $state<ModelState>(speech.state)
+  let prefetchStarted = false
+  onMount(() => speech.subscribe((s) => (model = s)))
+  function prefetch(): void {
+    if (prefetchStarted || activity.recording || !SpeechModel.supported())
+      return
+    const conn = (
+      navigator as unknown as { connection?: { saveData?: boolean } }
+    ).connection
+    if (conn?.saveData) return
+    prefetchStarted = true
+    const run = (): void => {
+      speech.load().catch(() => {
+        // Offline or blocked: try again later, quietly.
+        prefetchStarted = false
+      })
+    }
+    const idle = (
+      window as unknown as {
+        requestIdleCallback?: (f: () => void, o?: { timeout: number }) => void
+      }
+    ).requestIdleCallback
+    setTimeout(() => (idle ? idle(run, { timeout: 10000 }) : run()), 3000)
+  }
+  onMount(() => {
+    prefetch()
+    window.addEventListener('online', prefetch)
+    return () => window.removeEventListener('online', prefetch)
+  })
+  $effect(() => {
+    // Recording ended: a deferred prefetch can start.
+    if (!activity.recording) prefetch()
+  })
+  const modelNote = $derived(
+    model.status === 'downloading' && !model.cached
+      ? `Captions model ${Math.round(model.progress * 100)}%`
+      : model.status === 'downloading' || model.status === 'loading'
+        ? 'Captions model loading'
+        : model.status === 'ready'
+          ? 'Captions model ready'
+          : '',
+  )
 </script>
 
 <div class="app">
@@ -34,12 +90,22 @@
                 page = s.id
               }}
             >
-              <span class="num">{i + 1}</span>{s.label}
+              <span class="num">{i + 1}</span>{s.label}{#if s.optional}<small
+                  class="opt">optional</small
+                >{/if}
             </button>
           </li>
         {/each}
       </ol>
     </nav>
+    {#if modelNote}
+      <span
+        class="model"
+        role="status"
+        title="Speech model for captions, saved in this browser"
+        >{modelNote}</span
+      >
+    {/if}
     <button
       type="button"
       class="takes"
@@ -59,6 +125,22 @@
   <main hidden={page !== 'record'}>
     <RecordPage active={page === 'record'} />
   </main>
+  {#if page === 'annotate'}
+    <main>
+      <AnnotatePage
+        sessionId={takeId}
+        onrecord={() => (page = 'record')}
+        onskip={(id) => {
+          takeId = id
+          page = 'compose'
+        }}
+        oncontinue={(id) => {
+          takeId = id
+          page = 'compose'
+        }}
+      />
+    </main>
+  {/if}
   {#if page === 'compose'}
     <main>
       <ComposePage sessionId={takeId} onrecord={() => (page = 'record')} />
@@ -96,6 +178,17 @@
     border-bottom: 1px solid var(--border);
     background: var(--surface-1);
   }
+  .model {
+    margin-left: auto;
+    font-size: var(--text-sm);
+    color: var(--ink-3);
+  }
+  .opt {
+    margin-left: var(--space-1);
+    font-size: 0.7rem;
+    color: var(--ink-3);
+    font-weight: 400;
+  }
   .takes {
     margin-left: auto;
     font: inherit;
@@ -105,6 +198,9 @@
     background: var(--surface-2);
     color: var(--ink-1);
     cursor: pointer;
+  }
+  .model + .takes {
+    margin-left: var(--space-3);
   }
   .takes[aria-current='page'] {
     background: var(--accent);

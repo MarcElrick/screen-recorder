@@ -6,6 +6,7 @@
   import SelectField from '../components/SelectField.svelte'
   import SliderField from '../components/SliderField.svelte'
   import SwitchField from '../components/SwitchField.svelte'
+  import { activity } from '../activity.svelte'
   import { MIC_DEFAULT, MIC_OFF, RecorderStore } from './recorder.svelte'
   import { formatTime } from './format'
   import StreamVideo from './StreamVideo.svelte'
@@ -13,6 +14,10 @@
   let { active = true }: { active?: boolean } = $props()
   const r = new RecorderStore()
   onMount(() => void r.init())
+  $effect(() => {
+    activity.recording = r.busy
+    return () => (activity.recording = false)
+  })
 
   const bubble = $derived(bubblePlacement({ corner: r.corner, size: r.size }))
   const micOptions = $derived([

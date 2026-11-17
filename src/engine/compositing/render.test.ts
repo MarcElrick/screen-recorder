@@ -4,6 +4,7 @@ import {
   containRect,
   coverCrop,
   renderFrame,
+  wrapCaption,
   type Ctx2D,
 } from './render'
 
@@ -28,6 +29,10 @@ function fakeCtx() {
     roundRect: rec('roundRect'),
     clip: rec('clip'),
     stroke: rec('stroke'),
+    fill: rec('fill'),
+    strokeText: rec('strokeText'),
+    measureText: (t: string) => ({ width: t.length * 10 }),
+    fillText: (t: string) => calls.push(`fillText:${t}`),
   } as unknown as Ctx2D
   return { ctx, calls }
 }
@@ -98,5 +103,43 @@ describe('renderFrame', () => {
     expect(
       audioOnly.calls.filter((c) => c.startsWith('drawImage')),
     ).toHaveLength(1)
+  })
+})
+
+describe('captions', () => {
+  const out = { width: 1600, height: 900 }
+  const layout = {
+    placement: { x: 0.7, y: 0.6, width: 0.25, height: 0.4444 },
+    shape: 'circle' as const,
+  }
+  const caption = {
+    text: 'Hello there',
+    size: 'medium' as const,
+    position: 'bottom' as const,
+    background: true,
+  }
+
+  it('wraps by width', () => {
+    const lines = wrapCaption('aaa bbb ccc ddd', 80, (t) => t.length * 10)
+    expect(lines).toEqual(['aaa bbb', 'ccc ddd'])
+  })
+
+  it('draws text after the bubble, on a pill when asked', () => {
+    const { ctx, calls } = fakeCtx()
+    renderFrame(ctx, out, null, null, { ...layout, caption })
+    expect(calls).toContain('fillText:Hello there')
+    expect(calls.some((c) => c.startsWith('roundRect'))).toBe(true)
+    const none = fakeCtx()
+    renderFrame(none.ctx, out, null, null, layout)
+    expect(none.calls.some((c) => c.startsWith('fillText'))).toBe(false)
+  })
+
+  it('outlines text instead when there is no background', () => {
+    const { ctx, calls } = fakeCtx()
+    renderFrame(ctx, out, null, null, {
+      ...layout,
+      caption: { ...caption, background: false },
+    })
+    expect(calls.some((c) => c.startsWith('strokeText'))).toBe(true)
   })
 })

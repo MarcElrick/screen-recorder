@@ -1,10 +1,13 @@
 import type { BubbleShape } from './placement'
 import type { Placement } from './types'
+import type { CaptionDraw } from '../transcribe/types'
 
 /** What to draw on top of the screen: where the bubble sits and its shape. */
 export interface Layout {
   placement: Placement
   shape: BubbleShape
+  /** Caption text for this frame (drawn last), if any. */
+  caption?: CaptionDraw | null
 }
 
 export interface FrameSource {
@@ -35,6 +38,13 @@ export interface Ctx2D {
   roundRect(x: number, y: number, w: number, h: number, r: number): void
   clip(): void
   stroke(): void
+  fill?(): void
+  strokeText?(text: string, x: number, y: number): void
+  font?: string
+  textAlign?: string
+  textBaseline?: string
+  measureText?(text: string): { width: number }
+  fillText?(text: string, x: number, y: number): void
 }
 
 export interface Rect {
@@ -109,6 +119,79 @@ export function renderFrame(
     const r = containRect(screen.width, screen.height, out.width, out.height)
     ctx.drawImage(screen.source as never, r.x, r.y, r.w, r.h)
   }
+  drawBubble(ctx, out, camera, layout)
+  if (layout.caption) drawCaption(ctx, out, layout.caption)
+}
+
+const CAPTION_SCALE = { small: 0.028, medium: 0.036, large: 0.048 }
+
+/** Break text into lines no wider than `maxWidth` (greedy, by words). */
+export function wrapCaption(
+  text: string,
+  maxWidth: number,
+  measure: (t: string) => number,
+): string[] {
+  const lines: string[] = []
+  let line = ''
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const next = line ? `${line} ${word}` : word
+    if (line && measure(next) > maxWidth) {
+      lines.push(line)
+      line = word
+    } else line = next
+  }
+  if (line) lines.push(line)
+  return lines
+}
+
+/** Captions: centred text, optionally on a rounded dark pill. */
+export function drawCaption(
+  ctx: Ctx2D,
+  out: { width: number; height: number },
+  c: CaptionDraw,
+): void {
+  if (!c.text || !ctx.measureText || !ctx.fillText) return
+  const size = Math.max(14, Math.round(out.height * CAPTION_SCALE[c.size]))
+  ctx.save()
+  ctx.font = `600 ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  const measure = (t: string): number => ctx.measureText!(t).width
+  const maxW = out.width * 0.84
+  const lines = wrapCaption(c.text, maxW, measure).slice(-3)
+  const lineH = size * 1.3
+  const padX = size * 0.6
+  const padY = size * 0.35
+  const w = Math.max(...lines.map(measure)) + padX * 2
+  const h = lines.length * lineH + padY * 2
+  const margin = out.height * 0.05
+  const x = (out.width - w) / 2
+  const y = c.position === 'top' ? margin : out.height - margin - h
+  if (c.background) {
+    ctx.fillStyle = 'rgba(0,0,0,0.72)'
+    ctx.beginPath()
+    ctx.roundRect(x, y, w, h, size * 0.4)
+    ctx.fill?.()
+  }
+  lines.forEach((l, i) => {
+    const ty = y + padY + lineH * (i + 0.5)
+    if (!c.background) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)'
+      ctx.lineWidth = Math.max(2, size * 0.14)
+      ctx.strokeText?.(l, out.width / 2, ty)
+    }
+    ctx.fillStyle = '#fff'
+    ctx.fillText!(l, out.width / 2, ty)
+  })
+  ctx.restore()
+}
+
+function drawBubble(
+  ctx: Ctx2D,
+  out: { width: number; height: number },
+  camera: FrameSource | null,
+  layout: Layout,
+): void {
   if (!camera || camera.width <= 0 || camera.height <= 0) return
   const g = bubbleGeometry(layout, out.width, out.height)
   const c = coverCrop(camera.width, camera.height, g.w, g.h)

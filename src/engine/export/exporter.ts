@@ -16,6 +16,8 @@ import {
   type Layout,
 } from '../compositing/render'
 import { DecodedVideo } from '../playback/decoded-video'
+import { cueAt } from '../transcribe/cues'
+import type { CaptionStyle, Cue } from '../transcribe/types'
 import {
   audioBitrate,
   normaliseGain,
@@ -42,6 +44,8 @@ export interface ExportOptions {
   screen: Blob
   camera: Blob | null
   layout: Layout
+  /** Burn captions into the picture. */
+  captions?: { cues: Cue[]; style: CaptionStyle } | null
   format: ExportFormat
   fps?: number
   /** Cap on the output height (px); the source is never upscaled. */
@@ -181,7 +185,19 @@ export async function exportVideo(o: ExportOptions): Promise<ExportResult> {
             height: screenFrame.displayHeight,
           }
         : null
-      renderFrame(ctx as never, { width, height }, src, cam, o.layout)
+      const cue = o.captions ? cueAt(o.captions.cues, (i * 1000) / fps) : null
+      const layout: Layout = cue
+        ? {
+            ...o.layout,
+            caption: {
+              text: cue.text,
+              size: o.captions!.style.size,
+              position: o.captions!.style.position,
+              background: o.captions!.style.background,
+            },
+          }
+        : o.layout
+      renderFrame(ctx as never, { width, height }, src, cam, layout)
       await videoSource.add(i / fps, 1 / fps)
       if (i % 5 === 0) o.onProgress?.(i / total)
     }
@@ -237,6 +253,20 @@ async function buildEditedAudio(
         const s0 = Math.max(0, from)
         const s1 = Math.min(data.length, from + len)
         if (s1 > s0) dst.set(data.subarray(s0, s1), cursor + (s0 - from))
+      }
+      // Short ramps at every join so cuts don't click.
+      if (edit.ranges.length > 1) {
+        const ramp = Math.min(Math.round(sr * 0.01), Math.floor(len / 2))
+        const first = edit.ranges[0] === r
+        const last = edit.ranges[edit.ranges.length - 1] === r
+        for (let c = 0; c < src.numberOfChannels; c++) {
+          const dst = out.getChannelData(c)
+          for (let i = 0; i < ramp; i++) {
+            const g = i / ramp
+            if (!first) dst[cursor + i] *= g
+            if (!last) dst[cursor + len - 1 - i] *= g
+          }
+        }
       }
       cursor += len
     }

@@ -14,6 +14,8 @@ import {
 import type { DecodedVideo } from './decoded-video'
 import type { RemoteRenderer } from '../compositing/remote-renderer'
 import { planSync } from './sync'
+import { cueAt } from '../transcribe/cues'
+import type { CaptionStyle, Cue } from '../transcribe/types'
 
 type Listener = () => void
 
@@ -38,6 +40,8 @@ export class SessionPlayer {
   private lastOutputMs = 0
   private lastCameraActive = false
   layout: Layout
+  /** Captions drawn on the preview, in edited time. */
+  captions: { cues: Cue[]; style: CaptionStyle } | null = null
   duration: number
   private readonly screenExtent: { start: number; end: number }
   private readonly cameraExtent: { start: number; end: number } | null
@@ -212,10 +216,7 @@ export class SessionPlayer {
             ? this.lastOutputMs - this.cameraExtent.start
             : null,
         // Plain copy: the layout may be a reactive proxy, which can't be cloned.
-        layout: {
-          shape: this.layout.shape,
-          placement: { ...this.layout.placement },
-        },
+        layout: this.frameLayout(),
       })
       return
     }
@@ -256,7 +257,26 @@ export class SessionPlayer {
       { width: w, height: h },
       screenSrc,
       cam,
-      this.layout,
+      this.frameLayout(),
     )
+  }
+
+  /** The layout for this frame, with the caption that is showing now. */
+  private frameLayout(): Layout {
+    const cap = this.captions
+    const cue = cap?.style.enabled ? cueAt(cap.cues, this._playhead) : null
+    return {
+      shape: this.layout.shape,
+      placement: { ...this.layout.placement },
+      caption:
+        cue && cap
+          ? {
+              text: cue.text,
+              size: cap.style.size,
+              position: cap.style.position,
+              background: cap.style.background,
+            }
+          : null,
+    }
   }
 }

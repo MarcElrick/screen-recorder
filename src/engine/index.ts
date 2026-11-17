@@ -61,3 +61,4 @@ export {
   discardUnfinished,
 } from './session/recovery'
 export type { UnfinishedTake } from './session/recovery'
+export * from './transcribe'

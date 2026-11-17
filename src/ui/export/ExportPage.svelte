@@ -12,7 +12,12 @@
     sessionLabel,
     type SessionSummary,
     loadSession,
-    readCompose,
+    readCachedJson,
+    resolveEdit,
+    toSrt,
+    toVtt,
+    type Cue,
+    type Envelope,
     type ExportFormat,
     type ExportResult,
     type ExportSettings,
@@ -34,6 +39,9 @@
   let sessions = $state<SessionSummary[]>([])
   let takeId = $state('')
   let hasAudio = $state(true)
+  /** Captions from the Annotate step (edited-time cues). */
+  let cues = $state.raw<Cue[]>([])
+  let burnIn = $state(true)
   let settings = $state<ExportSettings>(structuredClone(PRESETS[0].settings))
   let progress = $state(0)
   let running = $state(false)
@@ -114,12 +122,28 @@
     if (!takeId) return
     try {
       const s = await loadSession(takeId)
+      const env = await readCachedJson<Envelope>(takeId, 'envelope.json')
+      const r = resolveEdit(s.manifest, env)
+      cues = r.cues
+      burnIn = r.transcript?.captions.enabled ?? false
       hasAudio = s.manifest.tracks.some(
         (t) => t.kind === 'camera' && t.hasAudio,
       )
     } catch {
       hasAudio = false
     }
+  }
+
+  function textFile(content: string, type: string): string {
+    return URL.createObjectURL(new Blob([content], { type }))
+  }
+  function downloadText(name: string, content: string, type: string): void {
+    const href = textFile(content, type)
+    const a = document.createElement('a')
+    a.href = href
+    a.download = name
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(href), 1000)
   }
 
   function clearResult(): void {
@@ -175,10 +199,13 @@
     abort = new AbortController()
     try {
       const s = await loadSession(takeId)
-      const compose = readCompose(s.manifest)
+      const env = await readCachedJson<Envelope>(takeId, 'envelope.json')
+      const r = resolveEdit(s.manifest, env)
+      const compose = r.compose
       result = await exportVideo({
         manifest: s.manifest,
-        edit: compose.edit,
+        edit: r.effective,
+        captions: burnIn && r.captions ? r.captions : null,
         screen: s.screen!,
         camera: s.camera,
         layout: compose.bubble,
@@ -337,6 +364,35 @@
           <p class="hint">This take has no microphone audio.</p>
         {/if}
       </fieldset>
+      {#if cues.length > 0}
+        <fieldset class="audio" disabled={running}>
+          <legend class="label">Captions</legend>
+          <SwitchField
+            label="Burn captions into the video"
+            checked={burnIn}
+            disabled={running}
+            onchange={(v) => change(() => (burnIn = v))}
+          />
+          <div class="actions">
+            <Button
+              onclick={() =>
+                downloadText(
+                  'captions.srt',
+                  toSrt(cues),
+                  'application/x-subrip',
+                )}
+            >
+              Download SRT
+            </Button>
+            <Button
+              onclick={() =>
+                downloadText('captions.vtt', toVtt(cues), 'text/vtt')}
+            >
+              Download VTT
+            </Button>
+          </div>
+        </fieldset>
+      {/if}
       {#if estimate}
         <p class="estimate" aria-live="polite">
           Estimated size: about {estimate}

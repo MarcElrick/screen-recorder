@@ -6,6 +6,7 @@
   import SelectField from '../components/SelectField.svelte'
   import ShapePicker from '../components/ShapePicker.svelte'
   import SliderField from '../components/SliderField.svelte'
+  import SwitchField from '../components/SwitchField.svelte'
   import { formatTime } from '../record/format'
   import { ComposeStore } from './compose.svelte'
   import Stage from './Stage.svelte'
@@ -121,6 +122,48 @@
           Trim start and end cut up to or from the playhead.
         </p>
       </div>
+      {#if store.captionStyle}
+        <h2>Captions</h2>
+        <div class="trim" role="group" aria-label="Captions">
+          <SwitchField
+            label="Show captions"
+            checked={store.captionStyle.enabled}
+            onchange={(v) => store.setCaptionStyle({ enabled: v })}
+          />
+          <SelectField
+            label="Size"
+            value={store.captionStyle.size}
+            options={[
+              { id: 'small', label: 'Small' },
+              { id: 'medium', label: 'Medium' },
+              { id: 'large', label: 'Large' },
+            ]}
+            onchange={(v) =>
+              store.setCaptionStyle({
+                size: v as 'small' | 'medium' | 'large',
+              })}
+          />
+          <SelectField
+            label="Position"
+            value={store.captionStyle.position}
+            options={[
+              { id: 'bottom', label: 'Bottom' },
+              { id: 'top', label: 'Top' },
+            ]}
+            onchange={(v) =>
+              store.setCaptionStyle({ position: v as 'top' | 'bottom' })}
+          />
+          <SwitchField
+            label="Dark background"
+            checked={store.captionStyle.background}
+            onchange={(v) => store.setCaptionStyle({ background: v })}
+          />
+          <p class="hint">
+            Words you deleted in Annotate are already cut from the video and the
+            captions.
+          </p>
+        </div>
+      {/if}
       <h2>Camera bubble</h2>
       {#if store.sessions.length > 1}
         <SelectField

@@ -38,6 +38,13 @@ import {
   type SessionSummary,
   type Placement,
   type ComposeState,
+  readTranscript,
+  resolveEdit,
+  withTranscript,
+  type Envelope,
+  type TranscriptState,
+  type CaptionStyle,
+  type Cue,
 } from '../../engine'
 
 const SAVE_DELAY_MS = 400
@@ -54,6 +61,8 @@ export interface TrackRow {
 interface Snapshot {
   bubble: ComposeState['bubble']
   edit: EditList
+  deleted: string[]
+  silences: Range[]
 }
 
 export class ComposeStore {
@@ -69,6 +78,11 @@ export class ComposeStore {
   cameraUrl = $state('')
   hasCameraVideo = $state(true)
   peaks = $state.raw<number[] | null>(null)
+  transcript = $state<TranscriptState | null>(null)
+  /** Manual cuts plus deleted words: what actually plays and exports. */
+  effective = $state.raw<EditList>({ version: 1, ranges: [] })
+  cues = $state.raw<Cue[]>([])
+  private envelope: Envelope | null = null
 
   duration = $state(0)
   playhead = $state(0)
@@ -114,13 +128,13 @@ export class ComposeStore {
       const compose = readCompose(s.manifest)
       this.session = s
       this.compose = compose
-      this.history = new History<Snapshot>({
-        bubble: $state.snapshot(compose.bubble) as ComposeState['bubble'],
-        edit: $state.snapshot(compose.edit) as EditList,
-      })
+      this.transcript = readTranscript(s.manifest)
+      this.envelope = await readCachedJson<Envelope>(id, 'envelope.json')
+      this.effective = compose.edit
+      this.history = new History<Snapshot>(this.snapshotNow(compose))
       this.selection = null
       this.syncHistoryFlags()
-      this.duration = editedDuration(compose.edit)
+      this.recompute(false)
       this.screenUrl = URL.createObjectURL(s.screen!)
       this.cameraUrl = s.camera ? URL.createObjectURL(s.camera) : ''
       this.playhead = 0
@@ -192,13 +206,14 @@ export class ComposeStore {
     this.framesMode = 'element'
     const p = new SessionPlayer(
       this.session.manifest,
-      this.compose.edit,
+      this.effective,
       screen,
       camera,
       canvas,
       this.compose.bubble,
     )
     this.player = p
+    p.captions = this.captionsFor()
     this.unsub = p.subscribe(() => {
       this.playhead = p.playhead
       this.playing = p.playing
@@ -259,6 +274,12 @@ export class ComposeStore {
     this.aspect = screen.width / screen.height
     p.setFrameSources(screen, camera)
     this.framesMode = 'webcodecs'
+  }
+
+  private captionsFor(): { cues: Cue[]; style: CaptionStyle } | null {
+    return this.transcript
+      ? { cues: this.cues, style: this.transcript.captions }
+      : null
   }
 
   detach(): void {
@@ -373,11 +394,55 @@ export class ComposeStore {
 
   private record(): void {
     if (!this.compose) return
-    this.history?.push({
-      bubble: $state.snapshot(this.compose.bubble) as ComposeState['bubble'],
-      edit: $state.snapshot(this.compose.edit) as EditList,
-    })
+    this.history?.push(this.snapshotNow(this.compose))
     this.syncHistoryFlags()
+  }
+
+  private snapshotNow(c: ComposeState): Snapshot {
+    return {
+      bubble: $state.snapshot(c.bubble) as ComposeState['bubble'],
+      edit: $state.snapshot(c.edit) as EditList,
+      deleted: [...(this.transcript?.deletedWordIds ?? [])],
+      silences: structuredClone(
+        $state.snapshot(this.transcript?.silenceCuts ?? []) as Range[],
+      ),
+    }
+  }
+
+  /**
+   * Re-derive the effective edit (manual cuts + deleted words) and push it to
+   * the player, the duration and the captions.
+   */
+  private recompute(emit = true): void {
+    if (!this.compose || !this.session) return
+    const r = resolveEdit(
+      this.session.manifest,
+      this.envelope,
+      $state.snapshot(this.compose) as ComposeState,
+      this.transcript
+        ? ($state.snapshot(this.transcript) as TranscriptState)
+        : null,
+    )
+    this.effective = r.effective
+    this.cues = r.cues
+    this.duration = editedDuration(r.effective)
+    if (this.player) {
+      this.player.captions = r.captions
+      if (emit) this.player.setEdit(r.effective)
+    }
+    if (emit) this.playhead = this.player?.playhead ?? 0
+  }
+
+  get captionStyle(): CaptionStyle | null {
+    return this.transcript?.captions ?? null
+  }
+  setCaptionStyle(patch: Partial<CaptionStyle>): void {
+    if (!this.transcript) return
+    this.transcript.captions = { ...this.transcript.captions, ...patch }
+    this.recompute()
+    this.player?.draw()
+    this.saved = false
+    this.scheduleSave()
   }
 
   undo(): void {
@@ -389,6 +454,10 @@ export class ComposeStore {
   private applyHistory(snap: Snapshot | undefined): void {
     if (!snap || !this.compose) return
     this.syncHistoryFlags()
+    if (this.transcript) {
+      this.transcript.deletedWordIds = [...snap.deleted]
+      this.transcript.silenceCuts = structuredClone(snap.silences)
+    }
     this.setEdit(structuredClone(snap.edit), false)
     this.setBubble(structuredClone(snap.bubble), false)
   }
@@ -411,22 +480,20 @@ export class ComposeStore {
     return this.session ? outputDuration(this.session.manifest) : 0
   }
   get removed(): Range[] {
-    return this.compose
-      ? removedRanges(this.compose.edit, this.outputTotal)
-      : []
+    return this.compose ? removedRanges(this.effective, this.outputTotal) : []
   }
   get edited(): boolean {
-    return !!this.compose && !isUntouched(this.compose.edit, this.outputTotal)
+    return !!this.compose && !isUntouched(this.effective, this.outputTotal)
   }
   /** The playhead on the source timeline. */
   get playheadOutput(): number {
-    return this.compose ? editedToOutput(this.compose.edit, this.playhead) : 0
+    return this.compose ? editedToOutput(this.effective, this.playhead) : 0
   }
 
   /** Seek to a point on the source timeline; cut points snap forward. */
   seekOutput(ms: number): void {
     if (!this.compose) return
-    this.seek(outputToEditedSnap(this.compose.edit, ms))
+    this.seek(outputToEditedSnap(this.effective, ms))
   }
 
   markIn(): void {
@@ -475,7 +542,16 @@ export class ComposeStore {
     this.applyEdit((e) => cutOutput(e, at, this.outputTotal))
   }
   restoreAll(): void {
+    if (this.transcript) {
+      this.transcript.deletedWordIds = []
+      this.transcript.silenceCuts = []
+    }
     this.applyEdit(() => defaultEditList(this.outputTotal))
+    // The manual edit may already be untouched; still record the restore.
+    this.recompute()
+    this.record()
+    this.saved = false
+    this.scheduleSave()
     this.clearSelection()
   }
 
@@ -489,9 +565,7 @@ export class ComposeStore {
   private setEdit(edit: EditList, commit: boolean): void {
     if (!this.compose) return
     this.compose.edit = edit
-    this.duration = editedDuration(edit)
-    this.player?.setEdit(edit)
-    this.playhead = this.player?.playhead ?? 0
+    this.recompute()
     this.saved = false
     if (commit) this.record()
     this.scheduleSave()
@@ -510,12 +584,18 @@ export class ComposeStore {
     if (this.saved || !this.session || !this.compose) return
     const id = this.session.manifest.id
     try {
+      const withC = withCompose(
+        this.session.manifest,
+        $state.snapshot(this.compose) as ComposeState,
+      )
       await saveManifest(
         id,
-        withCompose(
-          this.session.manifest,
-          $state.snapshot(this.compose) as ComposeState,
-        ),
+        this.transcript
+          ? withTranscript(
+              withC,
+              $state.snapshot(this.transcript) as TranscriptState,
+            )
+          : withC,
       )
       this.saved = true
     } catch {
