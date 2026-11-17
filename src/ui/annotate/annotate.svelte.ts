@@ -4,6 +4,7 @@ import {
   History,
   SessionLoadError,
   SpeechModel,
+  alignWords,
   detectFillers,
   listSessions,
   loadSession,
@@ -133,6 +134,12 @@ export class AnnotateStore {
       if (s.screen) this.screenUrl = URL.createObjectURL(s.screen)
       this.transcript = readTranscript(s.manifest)
       this.envelope = await readCachedJson<Envelope>(id, 'envelope.json')
+      // Transcripts made before timing alignment get it once, from the cached envelope.
+      if (this.transcript && !this.transcript.aligned && this.envelope) {
+        this.transcript.words = alignWords(this.transcript.words, this.envelope)
+        this.transcript.aligned = true
+        void this.persist()
+      }
       this.history = this.transcript
         ? new History<Snapshot>(this.snap(this.transcript))
         : null
@@ -249,7 +256,8 @@ export class AnnotateStore {
         language: out.language,
         // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a timestamp
         createdAt: new Date().toISOString(),
-        words: out.words,
+        words: alignWords(out.words, audio.envelope),
+        aligned: true,
         text: {},
         deletedWordIds: [],
         silenceCuts: [],

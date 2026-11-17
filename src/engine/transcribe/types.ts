@@ -37,6 +37,8 @@ export interface TranscriptState {
   /** Edited spelling by word id (timing is never changed). */
   text: Record<string, string>
   deletedWordIds: string[]
+  /** Word times were aligned to the audio energy (see alignWords). */
+  aligned?: boolean
   /** Long silences tightened by the optional tool (output ms). */
   silenceCuts: Range[]
   captions: CaptionStyle

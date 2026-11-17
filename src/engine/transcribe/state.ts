@@ -62,6 +62,7 @@ export function readTranscript(m: TranscribedManifest): TranscriptState | null {
       ? t.deletedWordIds.filter((id) => ids.has(id))
       : [],
     silenceCuts,
+    aligned: t.aligned === true,
     captions: cleanStyle(t.captions),
   }
 }
