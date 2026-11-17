@@ -104,3 +104,36 @@ describe('systematic lag', () => {
     expect(again.map((w) => w.startMs)).toEqual(out.map((w) => w.startMs))
   })
 })
+
+describe('lag longer than a word, and drift', () => {
+  // Counting: a 400 ms word every 700 ms, so a 300 ms lag puts each word's
+  // start on the silence after it.
+  const blobs: [number, number][] = []
+  for (let t = 1000; t < 60000; t += 700) blobs.push([t, t + 400])
+  const e = env(62000, blobs)
+
+  it('recovers a constant 300 ms lag', () => {
+    const words = blobs.map(([a, b], i) => word(i, a + 300, b + 300))
+    const out = alignWords(words, e)
+    const err = out.map((w, i) => Math.abs(w.startMs - blobs[i][0]))
+    expect(Math.max(...err)).toBeLessThanOrEqual(40)
+  })
+
+  it('follows a lag that grows over the take', () => {
+    const words = blobs.map(([a, b], i) => {
+      const lag = (300 * a) / 60000
+      return word(i, a + lag, b + lag)
+    })
+    const out = alignWords(words, e)
+    const err = out.map((w, i) => Math.abs(w.startMs - blobs[i][0]))
+    const sorted = [...err].sort((a, b) => a - b)
+    expect(sorted[Math.floor(sorted.length * 0.9)]).toBeLessThanOrEqual(50)
+  })
+
+  it('does not change words that are already right', () => {
+    const words = blobs.map(([a, b], i) => word(i, a, b))
+    const out = alignWords(words, e)
+    const err = out.map((w, i) => Math.abs(w.startMs - blobs[i][0]))
+    expect(Math.max(...err)).toBeLessThanOrEqual(30)
+  })
+})

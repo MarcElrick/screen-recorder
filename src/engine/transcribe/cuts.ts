@@ -19,7 +19,7 @@ export interface CutOptions {
 export const DEFAULT_CUT_OPTIONS: CutOptions = {
   snapRadiusMs: 120,
   snapForwardMs: 30,
-  padBeforeMs: 30,
+  padBeforeMs: 50,
   padAfterMs: 20,
 }
 

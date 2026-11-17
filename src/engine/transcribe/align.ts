@@ -1,4 +1,5 @@
 import type { Envelope } from './envelope'
+import { correctLag } from './lag'
 import type { Word } from './types'
 
 export interface AlignOptions {
@@ -13,10 +14,10 @@ export interface AlignOptions {
 }
 
 /** Bump when alignWords changes so stored transcripts are re-aligned. */
-export const ALIGN_VERSION = 2
+export const ALIGN_VERSION = 3
 
 export const DEFAULT_ALIGN_OPTIONS: AlignOptions = {
-  maxShiftMs: 200,
+  maxShiftMs: 150,
   leadMs: 15,
   tailMs: 10,
   minWordMs: 40,
@@ -95,11 +96,13 @@ export function alignWords(
     return null
   }
 
-  // Pass 1: detect each word's edges from the audio, from Whisper's raw times.
-  const raw = words.map((x) => ({
-    startMs: x.rawStartMs ?? x.startMs,
-    endMs: x.rawEndMs ?? x.endMs,
-  }))
+  // Step 1: Whisper is often late (or early) by a roughly constant amount,
+  // possibly drifting. Measure that against the audio over the whole take and
+  // correct every word first; this works even when the lag is longer than a
+  // word, which edge-by-edge search cannot handle.
+  const corrected = correctLag(words, env).words
+  // Step 2: from the corrected times, refine each edge to the real onset/offset.
+  const raw = corrected.map((x) => ({ startMs: x.startMs, endMs: x.endMs }))
   const det = raw.map((r, k) => {
     const prevEnd = k > 0 ? raw[k - 1].endMs : 0
     const nextStart = k + 1 < raw.length ? raw[k + 1].startMs : Infinity
@@ -121,30 +124,16 @@ export function alignWords(
       end: offset === null ? null : offset + opts.tailMs,
     }
   })
-  // Whisper's timestamps are often late by a fairly constant amount. Where
-  // the audio gives a clear edge we can measure that lag, and apply it to the
-  // words (fluent speech) that have no gap to find an edge in.
-  const median = (xs: number[]): number => {
-    if (xs.length < 4) return 0
-    const s = [...xs].sort((a, b) => a - b)
-    return Math.max(-250, Math.min(250, s[Math.floor(s.length / 2)]))
-  }
-  const lagStart = median(
-    det.flatMap((d, k) => (d.start === null ? [] : [raw[k].startMs - d.start])),
-  )
-  const lagEnd = median(
-    det.flatMap((d, k) => (d.end === null ? [] : [raw[k].endMs - d.end])),
-  )
   const out = words.map((x) => ({ ...x }))
   for (let k = 0; k < out.length; k++) {
     const r = raw[k]
     const d = det[k]
-    let start = d.start ?? r.startMs - lagStart
+    let start = d.start ?? r.startMs
     start = Math.max(start, 0)
-    let end = d.end ?? r.endMs - lagEnd
+    let end = d.end ?? r.endMs
     end = Math.max(end, start + opts.minWordMs)
-    out[k].rawStartMs = r.startMs
-    out[k].rawEndMs = r.endMs
+    out[k].rawStartMs = words[k].rawStartMs ?? words[k].startMs
+    out[k].rawEndMs = words[k].rawEndMs ?? words[k].endMs
     out[k].startMs = Math.round(start)
     out[k].endMs = Math.round(end)
   }
