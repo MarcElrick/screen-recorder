@@ -1,9 +1,13 @@
 <script lang="ts">
+  import ComposePage from './compose/ComposePage.svelte'
   import RecordPage from './record/RecordPage.svelte'
 
-  const steps = [
+  type Page = 'record' | 'compose' | 'export'
+  let page = $state<Page>('record')
+
+  const steps: { id: Page; label: string; enabled: boolean }[] = [
     { id: 'record', label: 'Record', enabled: true },
-    { id: 'compose', label: 'Compose', enabled: false },
+    { id: 'compose', label: 'Compose', enabled: true },
     { id: 'export', label: 'Export', enabled: false },
   ]
 </script>
@@ -14,20 +18,30 @@
     <nav aria-label="Steps">
       <ol>
         {#each steps as s, i (s.id)}
-          <li
-            aria-current={s.id === 'record' ? 'step' : undefined}
-            class:active={s.id === 'record'}
-            class:disabled={!s.enabled}
-          >
-            <span class="num">{i + 1}</span>{s.label}
+          <li class:active={s.id === page} class:disabled={!s.enabled}>
+            <button
+              type="button"
+              class="step"
+              aria-current={s.id === page ? 'step' : undefined}
+              disabled={!s.enabled}
+              onclick={() => (page = s.id)}
+            >
+              <span class="num">{i + 1}</span>{s.label}
+            </button>
           </li>
         {/each}
       </ol>
     </nav>
   </header>
-  <main>
+  <!-- Record stays mounted (hidden) so live streams survive a trip to Compose. -->
+  <main hidden={page !== 'record'}>
     <RecordPage />
   </main>
+  {#if page === 'compose'}
+    <main>
+      <ComposePage onrecord={() => (page = 'record')} />
+    </main>
+  {/if}
 </div>
 
 <style>
@@ -58,8 +72,22 @@
   li {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
     color: var(--ink-2);
+  }
+  .step {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: none;
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .step:disabled {
+    cursor: default;
   }
   li:not(:last-child)::after {
     content: '›';
@@ -85,6 +113,9 @@
   li.active .num {
     background: var(--accent);
     color: var(--accent-ink);
+  }
+  main[hidden] {
+    display: none;
   }
   main {
     flex: 1;
