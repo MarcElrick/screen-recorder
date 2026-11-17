@@ -21,7 +21,7 @@
     muted
     playsinline
     preload="auto"
-    hidden
+    class="source"
   ></video>
   {#if store.cameraUrl}
     <!-- svelte-ignore a11y_media_has_caption -->
@@ -30,7 +30,7 @@
       src={store.cameraUrl}
       playsinline
       preload="auto"
-      hidden
+      class="source"
     ></video>
   {/if}
   {#if store.hasCameraVideo && store.cameraUrl}
@@ -39,6 +39,16 @@
 </div>
 
 <style>
+  /* Not display:none: some browsers (Firefox) won't present frames for those. */
+  .source {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 2px;
+    height: 2px;
+    opacity: 0;
+    pointer-events: none;
+  }
   .frame {
     position: relative;
     width: min(100cqw, 100cqh * var(--aspect));

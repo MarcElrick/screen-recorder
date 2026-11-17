@@ -1,4 +1,5 @@
 import {
+  fixInfiniteDuration,
   History,
   SessionLoadError,
   SessionPlayer,
@@ -184,6 +185,8 @@ export class ComposeStore {
       this.playhead = p.playhead
       this.playing = p.playing
     })
+    fixInfiniteDuration(screen)
+    if (camera) fixInfiniteDuration(camera)
     screen.addEventListener('loadedmetadata', () => {
       if (screen.videoHeight)
         this.aspect = screen.videoWidth / screen.videoHeight
