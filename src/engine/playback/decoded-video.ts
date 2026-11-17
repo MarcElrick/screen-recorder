@@ -21,6 +21,7 @@ export class DecodedVideo {
   private generation = 0
   private disposed = false
   private pumping = false
+  private waiters = new Map<number, ((f: VideoFrame | null) => void)[]>()
   readonly width: number
   readonly height: number
   readonly durationMs: number
@@ -77,6 +78,11 @@ export class DecodedVideo {
     }
     this.cache.get(idx)?.close()
     this.cache.set(idx, f)
+    const ws = this.waiters.get(idx)
+    if (ws) {
+      this.waiters.delete(idx)
+      ws.forEach((w) => w(f))
+    }
     this.evict()
     this.pump()
   }
@@ -126,6 +132,28 @@ export class DecodedVideo {
     return null
   }
 
+  /**
+   * The exact frame at `ms`, waiting for it to be decoded (for export). The
+   * frame stays valid until the next `getFrame`/`frameAt` call moves on, so
+   * draw it right away. Resolves null if it can't be decoded in time.
+   */
+  async getFrame(ms: number, timeoutMs = 15_000): Promise<VideoFrame | null> {
+    if (this.disposed) return null
+    const target = this.indexAtOrBefore(Math.max(0, ms) * 1000)
+    this.frameAt(ms) // sets the target, seeks and starts decoding
+    const have = this.cache.get(target)
+    if (have) return have
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(this.frameAt(ms)), timeoutMs)
+      const list = this.waiters.get(target) ?? []
+      list.push((f) => {
+        clearTimeout(timer)
+        resolve(f)
+      })
+      this.waiters.set(target, list)
+    })
+  }
+
   private seek(target: number): void {
     const key = this.keyframeAtOrBefore(target)
     // Already decoding forward through the wanted frame: just let it run.
@@ -172,6 +200,8 @@ export class DecodedVideo {
 
   dispose(): void {
     this.disposed = true
+    for (const ws of this.waiters.values()) ws.forEach((w) => w(null))
+    this.waiters.clear()
     for (const f of this.cache.values()) f.close()
     this.cache.clear()
     try {

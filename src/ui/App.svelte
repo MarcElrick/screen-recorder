@@ -1,5 +1,6 @@
 <script lang="ts">
   import ComposePage from './compose/ComposePage.svelte'
+  import ExportPage from './export/ExportPage.svelte'
   import RecordPage from './record/RecordPage.svelte'
 
   type Page = 'record' | 'compose' | 'export'
@@ -8,7 +9,7 @@
   const steps: { id: Page; label: string; enabled: boolean }[] = [
     { id: 'record', label: 'Record', enabled: true },
     { id: 'compose', label: 'Compose', enabled: true },
-    { id: 'export', label: 'Export', enabled: false },
+    { id: 'export', label: 'Export', enabled: true },
   ]
 </script>
 
@@ -40,6 +41,11 @@
   {#if page === 'compose'}
     <main>
       <ComposePage onrecord={() => (page = 'record')} />
+    </main>
+  {/if}
+  {#if page === 'export'}
+    <main>
+      <ExportPage onrecord={() => (page = 'record')} />
     </main>
   {/if}
 </div>

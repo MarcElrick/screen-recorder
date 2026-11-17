@@ -44,3 +44,9 @@ export {
   SessionLoadError,
 } from './storage/session-store'
 export type { LoadedSession } from './storage/session-store'
+export { exportVideo, exportSupported, ExportError } from './export/exporter'
+export type {
+  ExportFormat,
+  ExportOptions,
+  ExportResult,
+} from './export/exporter'

@@ -27,7 +27,7 @@ pnpm test:e2e     # Playwright (set CHROMIUM_PATH to use a preinstalled Chromium
 pnpm build
 ```
 
-Status: Record page works (screen + camera/mic recorded as separate WebM files with pause/resume, streamed to OPFS). Compose and Export are not built yet.
+Status: Record, Compose and Export all work. Takes are recorded as separate screen and camera WebM files (repaired with a duration and seek index on stop), previewed in Compose with WebCodecs in a worker, and exported as MP4 or WebM with WebCodecs (H.264 where the browser can encode it, otherwise VP9) muxed with mediabunny.
 
 ## License
 
