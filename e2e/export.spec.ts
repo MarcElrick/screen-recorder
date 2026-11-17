@@ -51,6 +51,9 @@ for (const format of ['WebM', 'MP4']) {
       `recording.${format.toLowerCase()}`,
     )
     const path = await download.path()
+    await expect(
+      page.getByRole('region', { name: 'Exports this visit' }),
+    ).toContainText(`.${format.toLowerCase()}`)
 
     const info = ffprobe(path)
     test.skip(info === null, 'ffprobe not installed')

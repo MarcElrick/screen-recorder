@@ -42,6 +42,17 @@
   let url = $state('')
   let abort: AbortController | null = null
   let loaded = $state(false)
+  interface PastExport {
+    id: number
+    url: string
+    name: string
+    detail: string
+  }
+  let past = $state<PastExport[]>([])
+  let pastId = 0
+  const canPickFile =
+    typeof window !== 'undefined' && 'showSaveFilePicker' in window
+  let saveNote = $state('')
 
   const heights = [
     { id: '2160', label: '4K (2160p)' },
@@ -96,7 +107,7 @@
   })
   onDestroy(() => {
     abort?.abort()
-    if (url) URL.revokeObjectURL(url)
+    for (const p of past) URL.revokeObjectURL(p.url)
   })
 
   async function loadTakeInfo(): Promise<void> {
@@ -112,9 +123,37 @@
   }
 
   function clearResult(): void {
-    if (url) URL.revokeObjectURL(url)
+    // Object URLs live on in the history list until the page closes.
     url = ''
     result = null
+    saveNote = ''
+  }
+
+  async function saveAs(): Promise<void> {
+    if (!result) return
+    saveNote = ''
+    try {
+      const picker = (
+        window as unknown as {
+          showSaveFilePicker: (o: object) => Promise<{
+            createWritable: () => Promise<{
+              write: (b: Blob) => Promise<void>
+              close: () => Promise<void>
+            }>
+          }>
+        }
+      ).showSaveFilePicker
+      const handle = await picker({
+        suggestedName: `recording.${result.extension}`,
+      })
+      const w = await handle.createWritable()
+      await w.write(result.blob)
+      await w.close()
+      saveNote = 'Saved.'
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === 'AbortError'))
+        saveNote = "Couldn't save the file there. Use Download instead."
+    }
   }
 
   function change(fn: () => void): void {
@@ -152,6 +191,15 @@
         signal: abort.signal,
       })
       url = URL.createObjectURL(result.blob)
+      past = [
+        {
+          id: ++pastId,
+          url,
+          name: `${sessionLabel(take!)}.${result.extension}`,
+          detail: `${result.width}×${result.height}, ${formatTime(result.durationMs)}, ${(result.blob.size / 1024 / 1024).toFixed(1)} MB`,
+        },
+        ...past,
+      ]
     } catch (e) {
       error =
         e instanceof ExportError
@@ -351,10 +399,28 @@
         >
           Download recording.{result.extension}
         </a>
+        {#if canPickFile}
+          <Button onclick={() => void saveAs()}>Save to a folder…</Button>
+        {/if}
+        {#if saveNote}<p class="msg" role="status">{saveNote}</p>{/if}
       {:else}
         <p class="hint">Your exported video will appear here.</p>
       {/if}
     </section>
+
+    {#if past.length > 0}
+      <section class="card past" aria-label="Exports this visit">
+        <h2>Exported this visit</h2>
+        <ul>
+          {#each past as p (p.id)}
+            <li>
+              <span>{p.name}<small>{p.detail}</small></span>
+              <a href={p.url} download={p.name}>Download</a>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
   </div>
 {/if}
 
@@ -489,6 +555,26 @@
     background: var(--warn-bg);
     color: var(--warn-ink);
     font-size: var(--text-sm);
+  }
+  .past {
+    grid-column: 2;
+  }
+  .past ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: var(--space-2);
+  }
+  .past li {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    align-items: center;
+  }
+  .past small {
+    display: block;
+    color: var(--text-muted, inherit);
   }
   .download {
     justify-self: start;
